@@ -99,6 +99,12 @@ impl ConnectionProfilesPanel {
         }
     }
 
+    pub(super) fn request_new_query(&mut self, target: QueryTarget, cx: &mut Context<Self>) {
+        if target.db_type.capabilities().sql && self.state.query_target_is_live(&target) {
+            cx.emit(ConnectionProfilesEvent::NewQueryRequested(target));
+        }
+    }
+
     pub(super) fn request_performance(&mut self, target: QueryTarget, cx: &mut Context<Self>) {
         if target.db_type.capabilities().performance == crate::db::PerformanceMode::Native
             && self.state.query_target_is_live(&target)

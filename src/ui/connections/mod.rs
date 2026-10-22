@@ -115,6 +115,7 @@ pub(super) enum ConnectionProfilesEvent {
     CreateRequested,
     EditRequested(Arc<SharedConnectionProfile>),
     QueryTargetSelected(QueryTarget),
+    NewQueryRequested(QueryTarget),
     TableStructureRequested {
         target: QueryTarget,
         table: TableRef,

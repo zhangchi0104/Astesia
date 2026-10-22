@@ -8,6 +8,7 @@ use gpui_kit::Focusable;
 
 #[derive(Clone, Copy)]
 enum DatabaseAction {
+    NewQuery,
     Er,
     Performance,
     Backup,
@@ -39,7 +40,7 @@ impl ConnectionProfilesPanel {
             .as_ref()
             .is_some_and(|copy| copy.source.db_type == engine);
         let owner = cx.entity().downgrade();
-        let mut actions = vec![Er, Performance, Backup, Restore, Paste, Refresh];
+        let mut actions = vec![NewQuery, Er, Performance, Backup, Restore, Paste, Refresh];
         actions.extend(
             [
                 DatabaseObjectKind::Database,
@@ -58,6 +59,7 @@ impl ConnectionProfilesPanel {
         let menu = ContextMenu::build(window, cx, |mut menu, _, _| {
             for action in actions {
                 let supported = match action {
+                    NewQuery => capabilities.sql,
                     Er => capabilities.foreign_keys,
                     Performance => capabilities.performance == crate::db::PerformanceMode::Native,
                     Backup => capabilities.backup,
@@ -78,6 +80,7 @@ impl ConnectionProfilesPanel {
                     continue;
                 }
                 let label = match action {
+                    NewQuery => text(language, "新建查询", "New Query"),
                     Er => text(language, "实体关系图", "Entity Relationship Diagram"),
                     Performance => text(language, "性能监控", "Performance Monitor"),
                     Backup => text(language, "备份数据库", "Back Up Database"),
@@ -115,7 +118,7 @@ impl ConnectionProfilesPanel {
                 }
                 menu = menu.item(
                     ContextMenuEntry::new(label)
-                        .disabled(busy && !matches!(action, Refresh))
+                        .disabled(busy && !matches!(action, NewQuery | Refresh))
                         .handler(move |window, cx| {
                             owner
                                 .update(cx, |panel, cx| {
@@ -123,6 +126,7 @@ impl ConnectionProfilesPanel {
                                         return;
                                     }
                                     match action {
+                                        NewQuery => panel.request_new_query(target.clone(), cx),
                                         Er => panel.request_er_diagram(target.clone(), cx),
                                         Performance => {
                                             panel.request_performance(target.clone(), cx)
@@ -166,6 +170,9 @@ impl ConnectionProfilesPanel {
                                 .ok();
                         }),
                 );
+                if matches!(action, NewQuery) {
+                    menu = menu.separator();
+                }
             }
             menu
         });
