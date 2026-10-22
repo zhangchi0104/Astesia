@@ -7,7 +7,6 @@ impl Render for AstesiaWorkspace {
         let language = self.settings.read(cx).language();
         let sidebar_visible = self.settings.read(cx).sidebar_visible();
         let active_item = self.active_item().map(WorkspaceItem::element);
-        let active_tab = self.tabs.active();
         let status_indicator = if status.activity == ConnectionActivityStatus::NeedsRefresh {
             Color::Error
         } else {
@@ -55,7 +54,7 @@ impl Render for AstesiaWorkspace {
             .h_full()
             .min_w_0()
             .min_h_0()
-            .when(active_tab.is_some(), |pane| pane.child(self.tab_bar(cx)))
+            .child(self.tab_bar(cx))
             .child(
                 div()
                     .flex_1()
@@ -76,11 +75,26 @@ impl Render for AstesiaWorkspace {
                             .child(
                                 Label::new(text(
                                     language,
-                                    "从左侧选择连接，打开查询或数据表",
-                                    "Select a connection on the left to open a query or table",
+                                    "从左侧连接打开数据表，或直接新建查询",
+                                    "Open a table from a connection on the left, or start a new query",
                                 ))
                                 .size(LabelSize::Small)
                                 .color(Color::Placeholder),
+                            )
+                            .child(
+                                Button::new(
+                                    "empty-state-new-query",
+                                    text(language, "新建查询", "New Query"),
+                                )
+                                .size(ButtonSize::Compact)
+                                .style(ButtonStyle::Filled)
+                                .key_binding(crate::ui::components::KeyBinding::for_action(
+                                    &NewQueryTab,
+                                    cx,
+                                ))
+                                .on_click(cx.listener(
+                                    |workspace, _, window, cx| workspace.new_query_tab(window, cx),
+                                )),
                             )
                             .into_any_element()
                     })),

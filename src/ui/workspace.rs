@@ -379,6 +379,10 @@ impl AstesiaWorkspace {
                 }
                 return;
             }
+            ConnectionProfilesEvent::NewQueryRequested(target) => {
+                self.new_query_tab_for(Some(target.clone()), window, cx);
+                return;
+            }
             ConnectionProfilesEvent::TableStructureRequested { target, table } => {
                 self.open_table_structure(target.clone(), table.clone(), window, cx);
                 return;
@@ -655,8 +659,17 @@ impl AstesiaWorkspace {
     }
 
     fn new_query_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = cx.new(|cx| sql_language::editor(super::INITIAL_QUERY, window, cx));
         let target = self.connection_profiles.read(cx).query_target().cloned();
+        self.new_query_tab_for(target, window, cx);
+    }
+
+    fn new_query_tab_for(
+        &mut self,
+        target: Option<QueryTarget>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.new(|cx| sql_language::editor(super::INITIAL_QUERY, window, cx));
         let item = cx.new(|cx| {
             QueryItem::new(
                 self.application.clone(),
