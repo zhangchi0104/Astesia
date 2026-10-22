@@ -351,9 +351,12 @@ impl QueryItem {
         } else {
             vec![]
         };
+        // Line breaks still split the text into extra lines under `truncate`. Swapping each for
+        // a single-byte space keeps the search highlight ranges aligned.
+        let value = value.replace(['\r', '\n'], " ");
         div()
             .text_size(px(11.0))
-            .overflow_hidden()
+            .truncate()
             .child(StyledText::new(value).with_highlights(highlights))
             .into_any_element()
     }
