@@ -1,3 +1,9 @@
+## [2.2.1](https://github.com/zhangchi0104/Astesia/compare/v2.2.0...v2.2.1) (2026-10-24)
+
+### Bug Fixes
+
+* shrink query result toolbar text and allow resizing result columns ([1a4a07f](https://github.com/zhangchi0104/Astesia/commit/1a4a07fe375acbc8c8cbe28b37473026e8d06cc8))
+
 ## [2.2.0](https://github.com/zhangchi0104/Astesia/compare/v2.1.0...v2.2.0) (2026-10-24)
 
 ### Features
