@@ -193,6 +193,13 @@ impl Button {
         self.inner = self.inner.compact();
         self
     }
+    pub fn label_size(mut self, size: LabelSize) -> Self {
+        self.inner = match size {
+            LabelSize::XSmall => self.inner.xsmall(),
+            LabelSize::Small | LabelSize::Custom(_) => self.inner.small(),
+        };
+        self
+    }
     pub fn style(mut self, style: ButtonStyle) -> Self {
         self.inner = match style {
             ButtonStyle::Filled => self.inner.primary(),

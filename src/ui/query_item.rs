@@ -84,6 +84,7 @@ pub(super) struct QueryItem {
     editor: Entity<Editor>,
     result_focus: FocusHandle,
     result_search: result_search::ResultSearch,
+    result_columns: result_columns::ResultColumnWidths,
     _result_search_observation: Subscription,
     completion: SqlCompletionHandle,
     state: QueryWorkspaceState,
@@ -104,6 +105,7 @@ pub(super) struct QueryItem {
 }
 
 mod context_picker;
+mod result_columns;
 mod result_search;
 mod result_view;
 
@@ -141,6 +143,7 @@ impl QueryItem {
         Self {
             result_search,
             _result_search_observation: result_search_observation,
+            result_columns: Default::default(),
             application,
             editor,
             result_focus: cx.focus_handle(),
@@ -929,6 +932,7 @@ impl Render for QueryItem {
                                 },
                             )
                             .size(ButtonSize::Compact)
+                            .label_size(LabelSize::XSmall)
                             .toggle_state(self.showing_chart)
                             .on_click(cx.listener(Self::toggle_chart)),
                         )
@@ -940,6 +944,7 @@ impl Render for QueryItem {
                                 text(language, "全选", "Select All"),
                             )
                             .size(ButtonSize::Compact)
+                            .label_size(LabelSize::XSmall)
                             .on_click(cx.listener(Self::select_all_query_results_click)),
                         )
                     })
@@ -947,6 +952,7 @@ impl Render for QueryItem {
                         bar.child(
                             Button::new("copy-query-results", text(language, "复制", "Copy"))
                                 .size(ButtonSize::Compact)
+                                .label_size(LabelSize::XSmall)
                                 .on_click(cx.listener(Self::copy_query_results_click)),
                         )
                         .child(
@@ -955,6 +961,7 @@ impl Render for QueryItem {
                                 text(language, "复制含表头", "Copy with Headers"),
                             )
                             .size(ButtonSize::Compact)
+                            .label_size(LabelSize::XSmall)
                             .on_click(cx.listener(Self::copy_query_results_with_headers_click)),
                         )
                         .child(
@@ -963,6 +970,7 @@ impl Render for QueryItem {
                                 text(language, "取消选择", "Clear Selection"),
                             )
                             .size(ButtonSize::Compact)
+                            .label_size(LabelSize::XSmall)
                             .on_click(cx.listener(Self::clear_query_result_selection_click)),
                         )
                     }),
