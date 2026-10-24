@@ -1,3 +1,13 @@
+## [2.2.0](https://github.com/zhangchi0104/Astesia/compare/v2.1.0...v2.2.0) (2026-10-24)
+
+### Features
+
+* make new query reachable from any workspace state ([a4dad3f](https://github.com/zhangchi0104/Astesia/commit/a4dad3fe194349ee4ca187e049118852189af771))
+
+### Bug Fixes
+
+* keep query result cells on a single line ([91dd744](https://github.com/zhangchi0104/Astesia/commit/91dd7445ebceb8d3436945dd888e19be33815b56))
+
 ## v1.0.10 - 2026-09-07
 
 - fix: refine menu typography and workspace chrome (6505e2e)

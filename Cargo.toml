@@ -1,6 +1,6 @@
 [package]
 name = "astesia"
-version = "1.0.10"
+version = "2.2.0"
 description = "A database management application"
 authors = ["you"]
 license = ""
