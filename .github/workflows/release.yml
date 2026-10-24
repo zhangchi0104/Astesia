@@ -74,10 +74,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Both macOS targets build on the same arm64 runner image, so the target
+      # has to be part of the key or they overwrite each other's cache.
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
+          key: ${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Package Linux
         if: startsWith(matrix.platform, 'ubuntu')
