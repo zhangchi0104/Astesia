@@ -31,6 +31,9 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 90
+    env:
+      HAS_MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_APPLE_API_KEY: ${{ secrets.APPLE_API_KEY != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -72,9 +75,66 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu')
         run: scripts/package-linux.sh "${{ matrix.target }}"
 
+      - name: Import macOS signing certificate
+        if: startsWith(matrix.platform, 'macos') && env.HAS_MACOS_CERTIFICATE == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ vars.MACOS_CODESIGN_IDENTITY || secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/astesia-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          certificate="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$certificate"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$certificate"
+
+          identity="$MACOS_CODESIGN_IDENTITY"
+          if [ -z "$identity" ]; then
+            identity="$(security find-identity -v -p codesigning "$keychain" \
+              | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          fi
+          if [ -z "$identity" ]; then
+            echo "No Developer ID Application identity found in the certificate" >&2
+            exit 1
+          fi
+          echo "CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "CODESIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Prepare macOS notarization key
+        if: startsWith(matrix.platform, 'macos') && env.CODESIGN_IDENTITY != '' && env.HAS_APPLE_API_KEY == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ vars.APPLE_API_KEY_ID || secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER || secrets.APPLE_API_ISSUER }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY" | base64 --decode > "$key"
+          echo "NOTARY_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+          echo "NOTARY_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "NOTARY_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+
       - name: Package macOS
         if: startsWith(matrix.platform, 'macos')
         run: scripts/package-macos.sh "${{ matrix.target }}"
+
+      - name: Clean up macOS signing material
+        if: always() && startsWith(matrix.platform, 'macos')
+        run: |
+          if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
+            security delete-keychain "$CODESIGN_KEYCHAIN" || true
+          fi
+          if [ -n "${NOTARY_API_KEY_PATH:-}" ]; then
+            rm -f "$NOTARY_API_KEY_PATH"
+          fi
 
       - name: Package Windows
         if: startsWith(matrix.platform, 'windows')

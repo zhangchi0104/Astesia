@@ -15,7 +15,7 @@ entry points under `scripts/`.
 - `cargo test --locked` compiles and tests the application.
 - `cargo clippy --locked --all-targets` checks Rust lints.
 - `cargo fmt -- --check` checks Rust formatting.
-- `scripts/package-macos.sh <target>` builds an internal macOS application archive.
+- `scripts/package-macos.sh <target>` builds an internal macOS application archive. Signing and notarization: `docs/macos-signing.md`.
 - `scripts/package-linux.sh x86_64-unknown-linux-gnu` builds the internal Linux archive.
 - `scripts/package-windows.ps1 -Target x86_64-pc-windows-msvc` builds the Windows archive.
 

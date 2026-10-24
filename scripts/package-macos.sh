@@ -36,8 +36,40 @@ install -m 644 "$repository_root/icons/icon.icns" \
 sed "s/@VERSION@/$version/g" "$repository_root/packaging/macos/Info.plist.in" \
   > "$bundle/Contents/Info.plist"
 
-codesign --force --deep --sign "${CODESIGN_IDENTITY:--}" "$bundle"
-codesign --verify --deep --strict "$bundle"
+identity="${CODESIGN_IDENTITY:--}"
+if [ "$identity" = "-" ]; then
+  # Ad-hoc signature for local and unsigned CI builds.
+  codesign --force --deep --sign - "$bundle"
+else
+  # Developer ID signature: hardened runtime and secure timestamp are both
+  # required for notarization. Nested executables are signed before the bundle.
+  sign_args=(--force --options runtime --timestamp --sign "$identity")
+  if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
+    sign_args+=(--keychain "$CODESIGN_KEYCHAIN")
+  fi
+  codesign "${sign_args[@]}" "$bundle/Contents/MacOS/astesia-mcp"
+  codesign "${sign_args[@]}" "$bundle"
+fi
+codesign --verify --deep --strict --verbose=2 "$bundle"
+
 rm -f "$archive"
 ditto -c -k --sequesterRsrc --keepParent "$bundle" "$archive"
+
+if [ -n "${NOTARY_API_KEY_PATH:-}" ]; then
+  if [ "$identity" = "-" ]; then
+    echo "Notarization requires a Developer ID CODESIGN_IDENTITY" >&2
+    exit 2
+  fi
+  xcrun notarytool submit "$archive" \
+    --key "$NOTARY_API_KEY_PATH" \
+    --key-id "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID is required}" \
+    --issuer "${NOTARY_API_ISSUER:?NOTARY_API_ISSUER is required}" \
+    --wait --timeout 30m
+  xcrun stapler staple "$bundle"
+  spctl --assess --type execute --verbose=2 "$bundle"
+  # Re-archive so the shipped bundle carries the stapled ticket.
+  rm -f "$archive"
+  ditto -c -k --sequesterRsrc --keepParent "$bundle" "$archive"
+fi
+
 echo "$archive"
