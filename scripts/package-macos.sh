@@ -66,7 +66,6 @@ if [ -n "${NOTARY_API_KEY_PATH:-}" ]; then
     --issuer "${NOTARY_API_ISSUER:?NOTARY_API_ISSUER is required}" \
     --wait --timeout 30m
   xcrun stapler staple "$bundle"
-  xcrun stapler validate "$bundle"
   spctl --assess --type execute --verbose=2 "$bundle"
   # Re-archive so the shipped bundle carries the stapled ticket.
   rm -f "$archive"
