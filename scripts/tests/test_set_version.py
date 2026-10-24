@@ -4,14 +4,14 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).parents[1] / "bump_patch_version.py"
-SPEC = importlib.util.spec_from_file_location("bump_patch_version", SCRIPT)
+SCRIPT = Path(__file__).parents[1] / "set_version.py"
+SPEC = importlib.util.spec_from_file_location("set_version", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
-bump_patch_version = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(bump_patch_version)
+set_version = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(set_version)
 
 
-class BumpPatchVersionTests(unittest.TestCase):
+class SetVersionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         directory = Path(self.temporary_directory.name)
@@ -32,30 +32,41 @@ class BumpPatchVersionTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_bumps_matching_package_and_lockfile_versions(self) -> None:
+    def test_sets_matching_package_and_lockfile_versions(self) -> None:
         self.write_versions("1.2.3", "1.2.3")
 
-        version = bump_patch_version.bump_versions(self.manifest, self.lockfile)
+        version = set_version.set_version(self.manifest, self.lockfile, "1.3.0")
 
-        self.assertEqual(version, "1.2.4")
-        self.assertIn('version = "1.2.4"', self.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(version, "1.3.0")
+        self.assertIn('version = "1.3.0"', self.manifest.read_text(encoding="utf-8"))
         lockfile = self.lockfile.read_text(encoding="utf-8")
         self.assertIn('name = "dependency"\nversion = "9.0.0"', lockfile)
-        self.assertIn('name = "astesia"\nversion = "1.2.4"', lockfile)
+        self.assertIn('name = "astesia"\nversion = "1.3.0"', lockfile)
 
-    def test_prerelease_bumps_to_the_next_stable_patch(self) -> None:
-        self.write_versions("2.0.0-rc.3", "2.0.0-rc.3")
+    def test_accepts_prerelease_versions(self) -> None:
+        self.write_versions("2.0.0", "2.0.0")
 
-        self.assertEqual(
-            bump_patch_version.bump_versions(self.manifest, self.lockfile), "2.0.1"
+        set_version.set_version(self.manifest, self.lockfile, "2.1.0-beta.1")
+
+        self.assertIn(
+            'version = "2.1.0-beta.1"', self.manifest.read_text(encoding="utf-8")
         )
+
+    def test_rejects_invalid_version(self) -> None:
+        self.write_versions("1.2.3", "1.2.3")
+        before = (self.manifest.read_bytes(), self.lockfile.read_bytes())
+
+        with self.assertRaisesRegex(ValueError, "Unexpected Astesia version format"):
+            set_version.set_version(self.manifest, self.lockfile, "v1.3.0")
+
+        self.assertEqual(before, (self.manifest.read_bytes(), self.lockfile.read_bytes()))
 
     def test_mismatch_leaves_both_files_unchanged(self) -> None:
         self.write_versions("1.2.3", "1.2.2")
         before = (self.manifest.read_bytes(), self.lockfile.read_bytes())
 
         with self.assertRaisesRegex(ValueError, "version mismatch"):
-            bump_patch_version.bump_versions(self.manifest, self.lockfile)
+            set_version.set_version(self.manifest, self.lockfile, "1.3.0")
 
         self.assertEqual(before, (self.manifest.read_bytes(), self.lockfile.read_bytes()))
 

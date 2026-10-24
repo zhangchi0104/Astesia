@@ -34,7 +34,7 @@ record explicit runs in the relevant acceptance document.
 
 ## Commit & Pull Request Guidelines
 
-Recent history favors `type: concise summary`, especially `feat:`, `fix:`, and `ci:`; reserve `release:` for version commits. Use focused kebab-case branches such as `feat/query-improvements`. Pull requests should explain user-visible impact, identify affected database engines, link relevant issues, and list validation performed. Include screenshots or short recordings for UI changes.
+Recent history favors `type: concise summary`, especially `feat:`, `fix:`, and `ci:`; reserve `release:` for the version commits that semantic-release creates. Commit types decide the next version (see `docs/releasing.md`). Use focused kebab-case branches such as `feat/query-improvements`. Pull requests should explain user-visible impact, identify affected database engines, link relevant issues, and list validation performed. Include screenshots or short recordings for UI changes.
 
 ## Security & Configuration
 

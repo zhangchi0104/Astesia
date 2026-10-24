@@ -82,7 +82,9 @@ def _prepare_atomic_write(path: Path, content: str) -> Path:
     return temporary
 
 
-def bump_versions(manifest: Path, lockfile: Path) -> str:
+def set_version(manifest: Path, lockfile: Path, next_version: str) -> str:
+    if SEMVER.fullmatch(next_version) is None:
+        raise ValueError(f"Unexpected Astesia version format: {next_version}")
     manifest_content = manifest.read_text(encoding="utf-8")
     lockfile_content = lockfile.read_text(encoding="utf-8")
     manifest_version = _astesia_version(tomllib.loads(manifest_content), manifest)
@@ -92,16 +94,6 @@ def bump_versions(manifest: Path, lockfile: Path) -> str:
             f"Astesia version mismatch: {manifest} has {manifest_version}, "
             f"but {lockfile} has {lockfile_version}"
         )
-    match = SEMVER.fullmatch(manifest_version)
-    if match is None:
-        raise ValueError(f"Unexpected Astesia version format: {manifest_version}")
-    next_version = ".".join(
-        (
-            match.group("major"),
-            match.group("minor"),
-            str(int(match.group("patch")) + 1),
-        )
-    )
     updated_manifest = _replace_package_version(
         manifest_content, "[package]", manifest_version, next_version, manifest
     )
@@ -127,8 +119,9 @@ def bump_versions(manifest: Path, lockfile: Path) -> str:
 def main() -> None:
     repository_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(
-        description="Bump Astesia's Cargo package and lockfile patch version together."
+        description="Set Astesia's Cargo package and lockfile version together."
     )
+    parser.add_argument("version", help="the new semantic version, without a leading v")
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -140,7 +133,7 @@ def main() -> None:
         default=repository_root / "Cargo.lock",
     )
     arguments = parser.parse_args()
-    print(bump_versions(arguments.manifest, arguments.lockfile))
+    print(set_version(arguments.manifest, arguments.lockfile, arguments.version))
 
 
 if __name__ == "__main__":
