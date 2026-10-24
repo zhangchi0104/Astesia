@@ -64,13 +64,16 @@ impl ResultSearch {
         self.matches.get(self.current)
     }
 
-    fn reveal(&self) {
+    fn reveal(&self, columns: &result_columns::ResultColumnWidths) {
         let Some(active) = self.active() else { return };
+        let Some(result) = self.source.as_ref().and_then(std::sync::Weak::upgrade) else {
+            return;
+        };
         self.rows.scroll_to_item(active.row, ScrollStrategy::Center);
         let offset = self.horizontal.offset();
         let width = self.horizontal.bounds().size.width;
-        let start = px(48.0 + active.column as f32 * 180.0);
-        let end = start + px(180.0);
+        let start = px(columns.start(&result, active.column));
+        let end = start + px(columns.width(&result, active.column));
         let x = if start < -offset.x {
             -start
         } else if end > -offset.x + width {
@@ -137,7 +140,7 @@ impl QueryItem {
             .map(|r| find_matches(r, &search.query, search.case_sensitive))
             .unwrap_or_default();
         search.current = 0;
-        search.reveal();
+        search.reveal(&self.result_columns);
     }
 
     pub(super) fn open_result_search(
@@ -161,7 +164,7 @@ impl QueryItem {
             .input
             .update(cx, |input, cx| input.select_all(window, cx));
         window.focus(&self.result_search.input.focus_handle(cx), cx);
-        self.result_search.reveal();
+        self.result_search.reveal(&self.result_columns);
         cx.notify();
     }
 
@@ -202,7 +205,7 @@ impl QueryItem {
         let len = search.matches.len();
         if len > 0 {
             search.current = (search.current + if previous { len - 1 } else { 1 }) % len;
-            search.reveal();
+            search.reveal(&self.result_columns);
             cx.notify();
         }
     }

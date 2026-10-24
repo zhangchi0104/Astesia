@@ -1,4 +1,6 @@
+use super::result_columns::{ResizeResultColumn, ROW_NUMBER_WIDTH};
 use super::*;
+use gpui_kit::DragMoveEvent;
 
 impl QueryItem {
     pub(super) fn select_result(
@@ -156,6 +158,7 @@ impl QueryItem {
                             };
                             Button::new(format!("query-result-{index}"), label)
                                 .size(ButtonSize::Compact)
+                                .label_size(LabelSize::XSmall)
                                 .toggle_state(self.state.active_result_index() == index)
                                 .on_click(cx.listener(move |item, event, window, cx| {
                                     item.select_result(index, event, window, cx);
@@ -261,7 +264,7 @@ impl QueryItem {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let colors = cx.theme().colors();
-        let grid_width = px(48.0 + 180.0 * result.columns.len() as f32);
+        let grid_width = px(self.result_columns.total(result));
         let header = h_flex()
             .w_full()
             .flex_none()
@@ -271,7 +274,7 @@ impl QueryItem {
             .bg(colors.surface_background)
             .child(
                 div()
-                    .w(px(48.0))
+                    .w(px(ROW_NUMBER_WIDTH))
                     .flex_none()
                     .px_2()
                     .py_1()
@@ -283,21 +286,60 @@ impl QueryItem {
                             .weight(FontWeight::SEMIBOLD),
                     ),
             )
-            .children(result.columns.iter().map(|column| {
-                div()
-                    .w(px(180.0))
-                    .flex_none()
-                    .px_2()
-                    .py_1()
-                    .border_r_1()
-                    .border_color(colors.border)
-                    .child(
-                        Label::new(column.name.clone())
-                            .size(LabelSize::XSmall)
-                            .weight(FontWeight::SEMIBOLD)
-                            .truncate(),
-                    )
-            }));
+            .children(
+                result
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(column_index, column)| {
+                        div()
+                            .id(("query-result-header", column_index))
+                            .relative()
+                            .w(px(self.result_columns.width(result, column_index)))
+                            .h_full()
+                            .flex_none()
+                            .px_2()
+                            .py_1()
+                            .border_r_1()
+                            .border_color(colors.border)
+                            .child(
+                                Label::new(column.name.clone())
+                                    .size(LabelSize::XSmall)
+                                    .weight(FontWeight::SEMIBOLD)
+                                    .truncate(),
+                            )
+                            .on_drag_move(cx.listener(
+                                move |item, event: &DragMoveEvent<ResizeResultColumn>, _, cx| {
+                                    if event.drag(cx).0 != column_index {
+                                        return;
+                                    }
+                                    let Some(result) = item.state.shared_active_result() else {
+                                        return;
+                                    };
+                                    let width =
+                                        f32::from(event.event.position.x - event.bounds.left());
+                                    if item.result_columns.resize(&result, column_index, width) {
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .id(("query-result-column-resize", column_index))
+                                    .absolute()
+                                    .top_0()
+                                    .right_0()
+                                    .h_full()
+                                    .w(px(6.0))
+                                    .cursor_col_resize()
+                                    .hover(|element| element.bg(colors.border_focused))
+                                    .on_drag(ResizeResultColumn(column_index), |drag, _, _, cx| {
+                                        cx.stop_propagation();
+                                        cx.new(|_| drag.clone())
+                                    }),
+                            )
+                    }),
+            );
         let rows = gpui_kit::uniform_list(
             "query-result-rows",
             result.rows.len(),
@@ -324,7 +366,7 @@ impl QueryItem {
                                 .child(
                                     div()
                                         .id(format!("query-result-row-{row_index}"))
-                                        .w(px(48.0))
+                                        .w(px(ROW_NUMBER_WIDTH))
                                         .flex_none()
                                         .px_2()
                                         .py_1()
@@ -348,7 +390,7 @@ impl QueryItem {
                                             .id(format!(
                                                 "query-result-cell-{row_index}-{column_index}"
                                             ))
-                                            .w(px(180.0))
+                                            .w(px(item.result_columns.width(result, column_index)))
                                             .flex_none()
                                             .px_2()
                                             .py_1()
