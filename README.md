@@ -47,6 +47,14 @@ cargo clippy --locked --all-targets
 cargo fmt -- --check
 ```
 
+With Nix, `flake.nix` provides the same toolchain and native libraries on Linux and macOS:
+
+```bash
+nix develop               # shell with Rust 1.98.0, rust-analyzer and native libraries
+nix build                 # builds ./result/bin/astesia and astesia-mcp
+nix flake check           # app build, Clippy and rustfmt, as run by the Nix CI workflow
+```
+
 Environment-dependent seven-engine tests are ignored by the normal suite. Their disposable-service
 configuration and latest results are recorded in the milestone acceptance documents.
 
