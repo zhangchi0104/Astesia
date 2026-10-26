@@ -384,3 +384,70 @@ fn result_context_menu_selects_the_clicked_cell_and_keeps_existing_selection(
         })
         .unwrap();
 }
+
+#[gpui_kit::test]
+fn failed_results_offer_copying_the_error_and_sql(cx: &mut TestAppContext) {
+    use super::result_menu::ResultMenuAction;
+
+    cx.update(|cx| {
+        crate::ui::initialize_editor_runtime(crate::platform::ThemePreference::Light, cx);
+    });
+
+    let directory = tempfile::tempdir().expect("failed result repository directory");
+    let application = Arc::new(Application::with_repository(
+        SharedConnectionRepository::new(
+            directory.path().join("connections.sqlite3"),
+            MemoryCredentialVault::shared(),
+        ),
+    ));
+    let settings = cx.new(|_| ShellSettings::new(DesktopPreferences::default(), None));
+    let window = cx.add_window(|window, cx| {
+        let editor = cx.new(|cx| sql_language::editor("SELECT 1", window, cx));
+        QueryItem::new(application, editor, settings, window, cx)
+    });
+    window
+        .update(cx, |item, window, cx| {
+            item.state.set_target(Some(QueryTarget {
+                connection_id: "sqlite".to_string(),
+                connection_name: "Local".to_string(),
+                database: ":memory:".to_string(),
+                db_type: DbType::SQLite,
+                session_generation: 1,
+            }));
+            let request = item
+                .state
+                .begin_execution(
+                    QueryDocument::new("SELECT nope".to_string(), 0..0),
+                    QueryExecutionScope::All,
+                )
+                .unwrap();
+            let failed = StatementResult {
+                sql: "SELECT nope".to_string(),
+                success: false,
+                error: Some("no such column: nope".to_string()),
+                columns: vec![],
+                rows: vec![],
+                affected_rows: 0,
+                execution_time_ms: 1,
+            };
+            assert!(item.state.finish_execution(&request, Ok(vec![failed])));
+
+            item.open_result_menu(gpui_kit::point(px(0.0), px(0.0)), window, cx);
+            assert!(item.context_menu.is_some());
+            assert_eq!(
+                item.failure_text(ResultMenuAction::CopyError, cx)
+                    .as_deref(),
+                Some("no such column: nope")
+            );
+            assert_eq!(
+                item.failure_text(ResultMenuAction::CopySql, cx).as_deref(),
+                Some("SELECT nope")
+            );
+            assert_eq!(
+                item.failure_text(ResultMenuAction::CopyErrorAndSql, cx)
+                    .as_deref(),
+                Some("no such column: nope\n\nSELECT nope")
+            );
+        })
+        .unwrap();
+}

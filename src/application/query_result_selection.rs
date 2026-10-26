@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, ops::RangeInclusive};
 
 use serde_json::Value;
 
@@ -110,60 +110,65 @@ impl QueryResultSelection {
         )
     }
 
-    pub(super) fn to_tsv(&self, result: &StatementResult, include_headers: bool) -> Option<String> {
-        let rows = match &self.selection {
-            Selection::None => return None,
+    /// The selected column range and, for each selected row, the values in that range.
+    fn selected_values<'a>(
+        &self,
+        result: &'a StatementResult,
+    ) -> Option<(RangeInclusive<usize>, Vec<&'a [Value]>)> {
+        match &self.selection {
+            Selection::None => None,
             Selection::Cells { anchor, extent } => {
-                let row_start = anchor.row.min(extent.row);
-                let row_end = anchor.row.max(extent.row);
-                let column_start = anchor.column.min(extent.column);
-                let column_end = anchor.column.max(extent.column);
-                if row_end >= result.rows.len() || column_end >= result.columns.len() {
+                let rows = anchor.row.min(extent.row)..=anchor.row.max(extent.row);
+                let columns = anchor.column.min(extent.column)..=anchor.column.max(extent.column);
+                if *rows.end() >= result.rows.len() || *columns.end() >= result.columns.len() {
                     return None;
                 }
-
-                let mut rows = Vec::new();
-                if include_headers {
-                    rows.push(
-                        result.columns[column_start..=column_end]
-                            .iter()
-                            .map(|column| column.name.clone())
-                            .collect(),
-                    );
-                }
-                for row in &result.rows[row_start..=row_end] {
-                    let values = row.get(column_start..=column_end)?;
-                    rows.push(values.iter().map(format_value).collect());
-                }
-                rows
+                let values = result.rows[rows]
+                    .iter()
+                    .map(|row| row.get(columns.clone()))
+                    .collect::<Option<_>>()?;
+                Some((columns, values))
             }
             Selection::Rows { selected, .. } => {
-                let mut rows = Vec::new();
-                if include_headers {
-                    rows.push(
-                        result
-                            .columns
-                            .iter()
-                            .map(|column| column.name.clone())
-                            .collect(),
-                    );
-                }
-                for row_index in selected {
-                    let row = result.rows.get(*row_index)?;
-                    if row.len() < result.columns.len() {
-                        return None;
-                    }
-                    rows.push(
-                        row[..result.columns.len()]
-                            .iter()
-                            .map(format_value)
-                            .collect(),
-                    );
-                }
-                rows
+                let columns = 0..=result.columns.len().checked_sub(1)?;
+                let values = selected
+                    .iter()
+                    .map(|row| result.rows.get(*row)?.get(columns.clone()))
+                    .collect::<Option<_>>()?;
+                Some((columns, values))
             }
-        };
+        }
+    }
+
+    pub(super) fn to_tsv(&self, result: &StatementResult, include_headers: bool) -> Option<String> {
+        let (columns, values) = self.selected_values(result)?;
+        let mut rows = Vec::new();
+        if include_headers {
+            rows.push(
+                result.columns[columns]
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+            );
+        }
+        rows.extend(
+            values
+                .into_iter()
+                .map(|row| row.iter().map(format_value).collect()),
+        );
         Some(format_tsv(rows))
+    }
+
+    /// Copies the selection as a pretty-printed array with one object per row, keyed by column
+    /// name and keeping each value's JSON type.
+    pub(super) fn to_json(&self, result: &StatementResult) -> Option<String> {
+        let (columns, values) = self.selected_values(result)?;
+        let keys = unique_keys(result.columns[columns].iter().map(|column| &column.name));
+        let rows = values
+            .into_iter()
+            .map(|row| Value::Object(keys.iter().cloned().zip(row.iter().cloned()).collect()))
+            .collect();
+        serde_json::to_string_pretty(&Value::Array(rows)).ok()
     }
 
     fn replace(&mut self, next: Selection) -> bool {
@@ -181,6 +186,21 @@ fn format_value(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Array(_) | Value::Object(_) | Value::Bool(_) | Value::Number(_) => value.to_string(),
     }
+}
+
+/// Joined queries often repeat a column name; suffix repeats so no value is dropped.
+fn unique_keys<'a>(names: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for name in names {
+        let mut key = name.clone();
+        let mut suffix = 2;
+        while keys.contains(&key) {
+            key = format!("{name}_{suffix}");
+            suffix += 1;
+        }
+        keys.push(key);
+    }
+    keys
 }
 
 fn format_tsv(rows: Vec<Vec<String>>) -> String {
@@ -271,6 +291,34 @@ mod tests {
     }
 
     #[test]
+    fn json_copy_keeps_value_types_and_disambiguates_repeated_columns() {
+        let mut result = result();
+        let mut selection = QueryResultSelection::default();
+        selection.select_cell(0, 0, false);
+        selection.select_cell(1, 2, true);
+        assert_eq!(
+            serde_json::from_str::<Value>(&selection.to_json(&result).unwrap()).unwrap(),
+            json!([
+                { "id": 1, "message": "one\ttwo", "metadata": { "x": 1 } },
+                { "id": 2, "message": "line\nbreak", "metadata": null },
+            ])
+        );
+
+        result.columns[1].name = "id".to_string();
+        selection.select_row(2, false, false);
+        assert_eq!(
+            serde_json::from_str::<Value>(&selection.to_json(&result).unwrap()).unwrap(),
+            json!([{ "id": 3, "id_2": "plain", "metadata": [1, 2] }])
+        );
+        // Keys follow the grid's column order rather than sorting alphabetically.
+        result.columns[0].name = "z".to_string();
+        assert!(
+            selection.to_json(&result).unwrap().find("\"z\"")
+                < selection.to_json(&result).unwrap().find("\"id\"")
+        );
+    }
+
+    #[test]
     fn select_all_and_clear_handle_empty_and_populated_results() {
         let result = result();
         let mut selection = QueryResultSelection::default();
@@ -281,5 +329,6 @@ mod tests {
         assert!(selection.clear());
         assert!(!selection.has_selection());
         assert!(selection.to_tsv(&result, false).is_none());
+        assert!(selection.to_json(&result).is_none());
     }
 }

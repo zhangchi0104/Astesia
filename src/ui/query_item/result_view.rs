@@ -67,6 +67,12 @@ impl QueryItem {
         }
     }
 
+    pub(super) fn copy_result_selection_as_json(&self, cx: &mut Context<Self>) {
+        if let Some(json) = self.state.result_selection_json() {
+            cx.write_to_clipboard(ClipboardItem::new_string(json));
+        }
+    }
+
     pub(super) fn select_all_query_results(
         &mut self,
         _: &SelectAllQueryResults,
@@ -155,6 +161,12 @@ impl QueryItem {
                     ))
                     .size(LabelSize::XSmall),
                 )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|item, event: &MouseDownEvent, window, cx| {
+                        item.open_result_menu(event.position, window, cx);
+                    }),
+                )
                 .into_any_element();
         }
         if self.showing_chart {
@@ -209,6 +221,12 @@ impl QueryItem {
                     Label::new(result.sql.clone())
                         .size(LabelSize::XSmall)
                         .line_clamp(6),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|item, event: &MouseDownEvent, window, cx| {
+                        item.open_result_menu(event.position, window, cx);
+                    }),
                 )
                 .into_any_element();
         }
