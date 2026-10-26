@@ -1,6 +1,6 @@
 use super::result_columns::{ResizeResultColumn, ROW_NUMBER_WIDTH};
 use super::*;
-use gpui_kit::DragMoveEvent;
+use gpui_kit::{DragMoveEvent, MouseButton, MouseDownEvent};
 
 impl QueryItem {
     pub(super) fn select_result(
@@ -61,24 +61,6 @@ impl QueryItem {
         self.copy_result_selection(false, cx);
     }
 
-    pub(super) fn copy_query_results_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.copy_result_selection(false, cx);
-    }
-
-    pub(super) fn copy_query_results_with_headers_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.copy_result_selection(true, cx);
-    }
-
     pub(super) fn copy_result_selection(&self, include_headers: bool, cx: &mut Context<Self>) {
         if let Some(tsv) = self.state.result_selection_tsv(include_headers) {
             cx.write_to_clipboard(ClipboardItem::new_string(tsv));
@@ -96,30 +78,9 @@ impl QueryItem {
         }
     }
 
-    pub(super) fn select_all_query_results_click(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.focus(&self.result_focus, cx);
-        if self.state.select_all_result_rows() {
-            cx.notify();
-        }
-    }
-
     pub(super) fn clear_query_result_selection(
         &mut self,
         _: &ClearQueryResultSelection,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.clear_result_selection(cx);
-    }
-
-    pub(super) fn clear_query_result_selection_click(
-        &mut self,
-        _: &ClickEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -198,7 +159,16 @@ impl QueryItem {
         }
         if self.showing_chart {
             if let Some(chart) = &self.chart {
-                return chart.clone().into_any_element();
+                return div()
+                    .size_full()
+                    .child(chart.clone())
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|item, event: &MouseDownEvent, window, cx| {
+                            item.open_result_menu(event.position, window, cx);
+                        }),
+                    )
+                    .into_any_element();
             }
         }
         let Some(result) = self.state.active_result() else {
@@ -379,7 +349,21 @@ impl QueryItem {
                                         )
                                         .on_click(cx.listener(move |item, event, window, cx| {
                                             item.select_result_row(row_index, event, window, cx);
-                                        })),
+                                        }))
+                                        .on_mouse_down(
+                                            MouseButton::Right,
+                                            cx.listener(
+                                                move |item, event: &MouseDownEvent, window, cx| {
+                                                    item.open_result_row_menu(
+                                                        row_index,
+                                                        event.position,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    cx.stop_propagation();
+                                                },
+                                            ),
+                                        ),
                                 )
                                 .children(result.columns.iter().enumerate().map(
                                     |(column_index, _)| {
@@ -431,6 +415,21 @@ impl QueryItem {
                                                     );
                                                 },
                                             ))
+                                            .on_mouse_down(
+                                                MouseButton::Right,
+                                                cx.listener(
+                                                    move |item, event: &MouseDownEvent, window, cx| {
+                                                        item.open_result_cell_menu(
+                                                            row_index,
+                                                            column_index,
+                                                            event.position,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                        cx.stop_propagation();
+                                                    },
+                                                ),
+                                            )
                                     },
                                 )),
                         )
@@ -450,6 +449,12 @@ impl QueryItem {
             .on_action(cx.listener(Self::copy_query_results))
             .on_action(cx.listener(Self::select_all_query_results))
             .on_action(cx.listener(Self::clear_query_result_selection))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|item, event: &MouseDownEvent, window, cx| {
+                    item.open_result_menu(event.position, window, cx);
+                }),
+            )
             .size_full()
             .bg(colors.editor_background)
             .font_family(cx.theme().mono_font_family.clone())
