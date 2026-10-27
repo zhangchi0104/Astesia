@@ -1,3 +1,10 @@
+## [2.3.0](https://github.com/zhangchi0104/Astesia/compare/v2.2.1...v2.3.0) (2026-10-27)
+
+### Features
+
+* copy query results as JSON and copy failed statements ([8f5d50e](https://github.com/zhangchi0104/Astesia/commit/8f5d50ec9c71e30ffe2602fbf5c7ed0562df3d0f))
+* move query result actions into a right-click menu ([80079d9](https://github.com/zhangchi0104/Astesia/commit/80079d9cc771c500b953f71edf90c5402154828a))
+
 ## [2.2.1](https://github.com/zhangchi0104/Astesia/compare/v2.2.0...v2.2.1) (2026-10-24)
 
 ### Bug Fixes
