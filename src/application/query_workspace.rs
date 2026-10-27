@@ -284,6 +284,10 @@ impl QueryWorkspaceState {
         self.result_selection.clear()
     }
 
+    pub(crate) fn result_selection_json(&self) -> Option<String> {
+        self.result_selection.to_json(self.active_result()?)
+    }
+
     pub(crate) fn result_selection_tsv(&self, include_headers: bool) -> Option<String> {
         self.result_selection
             .to_tsv(self.active_result()?, include_headers)

@@ -106,6 +106,7 @@ pub(super) struct QueryItem {
 
 mod context_picker;
 mod result_columns;
+mod result_menu;
 mod result_search;
 mod result_view;
 
@@ -726,12 +727,7 @@ impl Render for QueryItem {
                 )
             }
         });
-        let can_select_result_rows = self
-            .state
-            .active_result()
-            .is_some_and(|result| !result.columns.is_empty() && !result.rows.is_empty());
-        let has_result_selection = self.state.has_result_selection();
-        let can_chart = self
+        let can_search_results = self
             .state
             .active_result()
             .is_some_and(|result| result.success && !result.columns.is_empty());
@@ -903,7 +899,7 @@ impl Render for QueryItem {
                     .children(
                         result_summary.map(|summary| Label::new(summary).size(LabelSize::XSmall)),
                     )
-                    .when(can_chart, |bar| {
+                    .when(can_search_results, |bar| {
                         bar.child(
                             query_toolbar_action(
                                 "find-results",
@@ -919,59 +915,6 @@ impl Render for QueryItem {
                                     item.open_result_search(&FindQueryResults, window, cx)
                                 },
                             )),
-                        )
-                    })
-                    .when(can_chart, |bar| {
-                        bar.child(
-                            Button::new(
-                                "toggle-query-chart",
-                                if self.showing_chart {
-                                    text(language, "表格", "Table")
-                                } else {
-                                    text(language, "图表", "Chart")
-                                },
-                            )
-                            .size(ButtonSize::Compact)
-                            .label_size(LabelSize::XSmall)
-                            .toggle_state(self.showing_chart)
-                            .on_click(cx.listener(Self::toggle_chart)),
-                        )
-                    })
-                    .when(can_select_result_rows, |bar| {
-                        bar.child(
-                            Button::new(
-                                "select-all-query-results",
-                                text(language, "全选", "Select All"),
-                            )
-                            .size(ButtonSize::Compact)
-                            .label_size(LabelSize::XSmall)
-                            .on_click(cx.listener(Self::select_all_query_results_click)),
-                        )
-                    })
-                    .when(has_result_selection, |bar| {
-                        bar.child(
-                            Button::new("copy-query-results", text(language, "复制", "Copy"))
-                                .size(ButtonSize::Compact)
-                                .label_size(LabelSize::XSmall)
-                                .on_click(cx.listener(Self::copy_query_results_click)),
-                        )
-                        .child(
-                            Button::new(
-                                "copy-query-results-with-headers",
-                                text(language, "复制含表头", "Copy with Headers"),
-                            )
-                            .size(ButtonSize::Compact)
-                            .label_size(LabelSize::XSmall)
-                            .on_click(cx.listener(Self::copy_query_results_with_headers_click)),
-                        )
-                        .child(
-                            Button::new(
-                                "clear-query-result-selection",
-                                text(language, "取消选择", "Clear Selection"),
-                            )
-                            .size(ButtonSize::Compact)
-                            .label_size(LabelSize::XSmall)
-                            .on_click(cx.listener(Self::clear_query_result_selection_click)),
                         )
                     }),
             )
