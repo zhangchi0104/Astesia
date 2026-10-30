@@ -1,3 +1,9 @@
+## [2.3.1](https://github.com/zhangchi0104/Astesia/compare/v2.3.0...v2.3.1) (2026-10-30)
+
+### Bug Fixes
+
+* let a failed WHERE filter be cleared from the filter bar ([d44a1a6](https://github.com/zhangchi0104/Astesia/commit/d44a1a6bfc41abf5e8c1321711485ee0ad901587))
+
 ## [2.3.0](https://github.com/zhangchi0104/Astesia/compare/v2.2.1...v2.3.0) (2026-10-27)
 
 ### Features
