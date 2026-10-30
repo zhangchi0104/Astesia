@@ -100,6 +100,33 @@ fn failed_filters_can_be_cleared_without_a_loaded_page() {
 }
 
 #[test]
+fn failed_filters_can_be_cleared_from_the_filter_bar() {
+    let mut session = loaded_session(DbType::PostgreSQL, &[0]);
+    assert!(session
+        .set_query_options(Some("broken predicate".to_string()), Vec::new())
+        .unwrap());
+    let request = session.begin_load().unwrap();
+    assert!(session.finish_load(&request, Err("syntax error".to_string())));
+    assert!(session.page().is_none());
+
+    assert!(session
+        .set_query_options(Some("   ".to_string()), Vec::new())
+        .unwrap());
+    assert!(session.query().filter.is_none());
+    assert_eq!(session.query().page, 1);
+    assert_eq!(
+        session.set_query_options(
+            None,
+            vec![GridSort {
+                column: "name".to_string(),
+                direction: GridSortDirection::Ascending,
+            }],
+        ),
+        Err(GridSessionError::AwaitingData)
+    );
+}
+
+#[test]
 fn sorting_is_typed_and_validated_against_loaded_columns() {
     let mut session = loaded_session(DbType::PostgreSQL, &[0]);
     assert_eq!(

@@ -535,15 +535,24 @@ impl GridSession {
         let filter = filter
             .map(|filter| filter.trim().to_string())
             .filter(|filter| !filter.is_empty());
-        let page = self.page().ok_or(GridSessionError::AwaitingData)?;
-        let columns = page
-            .columns
-            .iter()
-            .map(|column| column.name.as_str())
-            .collect::<HashSet<_>>();
+        // A failed filter leaves no page behind. Clearing or fixing the filter
+        // must still work then, so only a changed sort needs loaded columns.
+        let columns = match self.page() {
+            Some(page) => Some(
+                page.columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect::<HashSet<_>>(),
+            ),
+            None if sort == self.query.sort => None,
+            None => return Err(GridSessionError::AwaitingData),
+        };
         let mut seen = HashSet::new();
         for item in &sort {
-            if !columns.contains(item.column.as_str()) {
+            if columns
+                .as_ref()
+                .is_some_and(|columns| !columns.contains(item.column.as_str()))
+            {
                 return Err(GridSessionError::UnknownSortColumn(item.column.clone()));
             }
             if !seen.insert(item.column.as_str()) {
