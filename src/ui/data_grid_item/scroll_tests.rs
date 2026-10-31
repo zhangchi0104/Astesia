@@ -262,3 +262,37 @@ fn virtual_grid_scrolls_to_distant_rows_without_rendering_the_page(
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(cx.debug_bounds("grid-empty").unwrap(), empty);
 }
+
+#[gpui_kit::test]
+fn refresh_runs_the_filter_bar_text(cx: &mut gpui_kit::TestAppContext) {
+    let (view, cx, _directory) = grid_test_window(cx);
+    view.update_in(cx, |item, window, cx| {
+        let columns = vec![ColumnInfo {
+            name: "id".into(),
+            data_type: "int4".into(),
+            nullable: false,
+            is_primary_key: true,
+            default_value: None,
+            comment: None,
+        }];
+        let request = item.state.begin_load().unwrap();
+        assert!(item.state.finish_load(
+            &request,
+            Ok(GridPage::new(columns, vec![vec![Value::from(1)]], Some(1)).unwrap())
+        ));
+        item.filter_editor
+            .update(cx, |editor, cx| editor.set_text("id > 0", window, cx));
+        item.refresh_active(cx);
+        assert_eq!(item.state.query().filter.as_deref(), Some("id > 0"));
+    });
+    // The fixture connection doesn't exist, so the filtered load fails and
+    // leaves no page, like a broken WHERE clause would.
+    cx.run_until_parked();
+    view.update_in(cx, |item, window, cx| {
+        assert!(item.state.page().is_none());
+        item.filter_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        item.refresh_active(cx);
+        assert_eq!(item.state.query().filter, None);
+    });
+}

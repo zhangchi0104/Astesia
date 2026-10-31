@@ -54,6 +54,10 @@ impl DataGridItem {
         if !self.prepare_for_navigation() {
             return;
         }
+        // Refresh runs what the filter bar shows, even if Enter was never pressed.
+        if self.apply_query_editors(cx).is_none() {
+            return;
+        }
         self.operation_notice = None;
         if self.showing_chart {
             self.load_chart(cx);
@@ -205,6 +209,15 @@ impl DataGridItem {
         if !self.commit_cell_edit(window, cx) || self.state.has_changes() {
             return;
         }
+        if self.apply_query_editors(cx) == Some(true) {
+            self.operation_notice = None;
+            self.load(cx);
+        }
+    }
+
+    /// Copies the WHERE and ORDER BY editors into the grid query. Returns
+    /// whether the query changed, or `None` after showing why it is invalid.
+    fn apply_query_editors(&mut self, cx: &mut Context<Self>) -> Option<bool> {
         let filter = self.filter_editor.read(cx).text(cx);
         let sort = match GridSort::parse_list(&self.sort_editor.read(cx).text(cx)) {
             Ok(sort) => sort,
@@ -218,20 +231,22 @@ impl DataGridItem {
                     )
                 )));
                 cx.notify();
-                return;
+                return None;
             }
         };
+        let query = self.state.query();
+        let trimmed = filter.trim();
+        if query.filter.as_deref().unwrap_or_default() == trimmed && query.sort == sort {
+            return Some(false);
+        }
         match self.state.set_query_options(Some(filter), sort) {
-            Ok(true) => {
-                self.operation_notice = None;
-                self.load(cx);
-            }
-            Ok(false) => {}
+            Ok(changed) => Some(changed),
             Err(error) => {
                 let language = self.settings.read(cx).language();
                 self.operation_notice =
                     Some(GridNotice::Error(grid_error_message(error, language)));
                 cx.notify();
+                None
             }
         }
     }
