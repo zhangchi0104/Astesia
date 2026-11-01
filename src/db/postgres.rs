@@ -1016,6 +1016,7 @@ mod tests {
             password: String::new(),
             database: Some("postgres".into()),
             color: None,
+            tailscale: false,
         });
         driver.connect().await.unwrap();
         let setup = driver

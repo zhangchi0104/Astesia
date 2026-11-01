@@ -51,6 +51,7 @@ async fn release_memory_workload() {
         password: String::new(),
         database: Some(database_path.to_string_lossy().into_owned()),
         color: None,
+        tailscale: false,
     };
     application
         .connections()

@@ -676,6 +676,7 @@ mod tests {
                         password: String::new(),
                         database: None,
                         color: None,
+                        tailscale: false,
                     },
                     false,
                 )

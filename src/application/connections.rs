@@ -97,6 +97,10 @@ impl ConnectionManager {
             config
         };
 
+        let config = match crate::tailnet::route(config).await {
+            Ok(config) => config,
+            Err(error) => return Ok(ConnectionOutcome::Rejected(format!("{error:#}"))),
+        };
         match create_driver(&config).test_connection().await {
             Ok(_) => Ok(ConnectionOutcome::Succeeded),
             Err(error) => Ok(ConnectionOutcome::Rejected(error.to_string())),

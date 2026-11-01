@@ -697,6 +697,7 @@ mod tests {
             password: String::new(),
             database: Some("db0".to_string()),
             color: None,
+            tailscale: false,
         });
         driver.connect().await.unwrap();
         let mut connection = driver.selected_connection("db0").await.unwrap();

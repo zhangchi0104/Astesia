@@ -158,6 +158,9 @@ impl<A> ConnectionRuntime<A> {
         Verify: FnOnce() -> VerifyFuture,
         VerifyFuture: Future<Output = Result<i64, E>>,
     {
+        let config = crate::tailnet::route(config)
+            .await
+            .map_err(|error| ReplacingConnectError::Connect(format!("{error:#}")))?;
         let mut driver = create_driver(&config);
         if let Err(error) = driver.connect().await {
             return Err(ReplacingConnectError::Connect(error.to_string()));
@@ -229,6 +232,9 @@ impl<A> ConnectionRuntime<A> {
         Verify: FnOnce() -> VerifyFuture,
         VerifyFuture: Future<Output = Result<i64, E>>,
     {
+        let config = crate::tailnet::route(config)
+            .await
+            .map_err(|error| ExclusiveConnectError::Connect(format!("{error:#}")))?;
         let mut driver = create_driver(&config);
         if let Err(error) = driver.connect().await {
             return Err(ExclusiveConnectError::Connect(error.to_string()));
@@ -394,6 +400,7 @@ mod tests {
             password: String::new(),
             database: None,
             color: None,
+            tailscale: false,
         }
     }
 

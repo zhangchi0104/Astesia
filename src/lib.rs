@@ -10,6 +10,7 @@ mod mcp_runtime;
 mod mcp_sync;
 mod mcp_sync_server;
 mod platform;
+mod tailnet;
 mod tasks;
 mod ui;
 

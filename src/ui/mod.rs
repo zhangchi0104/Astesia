@@ -52,6 +52,7 @@ use crate::platform::{
 const APP_IDENTIFIER: &str = "com.astesia.app";
 const INITIAL_QUERY: &str = "SELECT 1;\n";
 pub fn run() {
+    crate::tailnet::enable_browser_login();
     let (preferences, preferences_store, preferences_warning) = load_preferences();
 
     gpui_kit::application()

@@ -12,6 +12,11 @@ default-run = "astesia"
 [lib]
 name = "app_lib"
 
+[features]
+# Embedded Tailscale node (libtailscale). Building it needs Go 1.25 or newer;
+# libtailscale only supports Unix, so Windows builds leave this off.
+tailscale = ["dep:libtailscale"]
+
 [dependencies]
 gpui-kit = { version = "=0.6.0", features = ["tree-sitter-sql"] }
 lsp-types = "=0.97.0"
@@ -43,6 +48,9 @@ keyring = { version = "=3.6.3", default-features = false, features = ["apple-nat
 ring = "=0.17.14"
 zeroize = "=1.8.2"
 tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+libtailscale = { version = "=0.2.2", optional = true }
 
 [dev-dependencies]
 gpui-kit = { version = "=0.6.0", features = ["test-support"] }

@@ -45,6 +45,44 @@ impl ConnectionProfileForm {
         )
     }
 
+    fn render_tailscale_option(&self, busy: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let weak = cx.entity().downgrade();
+        let detail = if crate::tailnet::is_available() {
+            text(
+                self.language,
+                "使用 Astesia 自带的 Tailscale 节点，账户与系统 Tailscale 客户端相互独立。首次连接时会在浏览器中打开登录页面。",
+                "Uses Astesia's own Tailscale node, signed in separately from the system Tailscale client. The first connection opens the sign-in page in your browser.",
+            )
+        } else {
+            text(
+                self.language,
+                "此版本不包含内置 Tailscale，请关闭此选项后再连接。",
+                "This build does not include built-in Tailscale. Turn this off to connect.",
+            )
+        };
+        v_flex()
+            .gap_1()
+            .child(
+                gpui_kit::component::checkbox::Checkbox::new("connection-profile-tailscale")
+                    .checked(self.tailscale)
+                    .label(text(
+                        self.language,
+                        "通过内置 Tailscale 连接",
+                        "Connect through built-in Tailscale",
+                    ))
+                    .disabled(busy)
+                    .on_click(move |state, _, cx| {
+                        weak.update(cx, |form, cx| form.set_tailscale(*state, cx))
+                            .ok();
+                    }),
+            )
+            .child(
+                Label::new(detail)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+    }
+
     fn render_notice(&self, notice: &FormNotice, cx: &mut Context<Self>) -> AnyElement {
         let (color, icon) = match notice.kind {
             NoticeKind::Info => (Color::Info, IconName::LoaderCircle),
@@ -210,6 +248,11 @@ impl Render for ConnectionProfileForm {
                             .when(!spec.is_file(), |section| {
                                 section.child(self.fields.database.clone())
                             })
+                            .when(
+                                !spec.is_file()
+                                    && (crate::tailnet::is_available() || self.tailscale),
+                                |section| section.child(self.render_tailscale_option(busy, cx)),
+                            )
                             .child(
                                 h_flex()
                                     .items_start()

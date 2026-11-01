@@ -136,6 +136,7 @@ struct InitialValues {
     tags: String,
     color: String,
     has_credential: bool,
+    tailscale: bool,
 }
 
 pub(super) struct ConnectionProfileForm {
@@ -143,6 +144,7 @@ pub(super) struct ConnectionProfileForm {
     origin: ProfileOrigin,
     db_type: DbType,
     fields: FormFields,
+    tailscale: bool,
     scroll_handle: ScrollHandle,
     operation: FormOperation,
     test_notice: Option<FormNotice>,
@@ -176,6 +178,7 @@ impl ConnectionProfileForm {
                         tags: String::new(),
                         color: engine_hex_color(db_type).to_string(),
                         has_credential: false,
+                        tailscale: false,
                     },
                 )
             }
@@ -191,6 +194,7 @@ impl ConnectionProfileForm {
                     tags: profile.tags.join(", "),
                     color: profile.color.clone().unwrap_or_default(),
                     has_credential: profile.has_credential,
+                    tailscale: profile.tailscale,
                 };
                 (origin, profile.db_type, values)
             }
@@ -308,6 +312,7 @@ impl ConnectionProfileForm {
             origin,
             db_type,
             fields,
+            tailscale: values.tailscale,
             scroll_handle: ScrollHandle::new(),
             operation: FormOperation::Idle,
             test_notice: None,
@@ -388,6 +393,16 @@ impl ConnectionProfileForm {
                 .update(cx, |input, cx| input.clear(window, cx));
         }
 
+        self.test_notice = None;
+        self.save_notice = None;
+        cx.notify();
+    }
+
+    fn set_tailscale(&mut self, tailscale: bool, cx: &mut Context<Self>) {
+        if self.operation.is_busy() || self.tailscale == tailscale {
+            return;
+        }
+        self.tailscale = tailscale;
         self.test_notice = None;
         self.save_notice = None;
         cx.notify();
@@ -580,6 +595,7 @@ impl ConnectionProfileForm {
             group_name: field_text(&self.fields.group_name, cx),
             tags: field_text(&self.fields.tags, cx),
             color: field_text(&self.fields.color, cx),
+            tailscale: self.tailscale,
         };
         match draft.validate(&self.origin) {
             Ok(request) => Some(request),

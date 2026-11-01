@@ -55,6 +55,9 @@ nix build                 # builds ./result/bin/astesia and astesia-mcp
 nix flake check           # app build, Clippy and rustfmt, as run by the Nix CI workflow
 ```
 
+Built-in Tailscale is behind the `tailscale` cargo feature and needs Go 1.25 or newer. See the
+[built-in Tailscale guide](docs/tailscale.md).
+
 Environment-dependent seven-engine tests are ignored by the normal suite. Their disposable-service
 configuration and latest results are recorded in the milestone acceptance documents.
 

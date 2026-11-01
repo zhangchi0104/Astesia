@@ -26,7 +26,7 @@ trap 'rm -rf "$stage"' EXIT
 
 rustup target add --toolchain "$toolchain" "$target"
 rustup run "$toolchain" cargo build --release --locked --manifest-path "$manifest" --target "$target" \
-  --bin astesia --bin astesia-mcp
+  --features tailscale --bin astesia --bin astesia-mcp
 
 mkdir -p "$bundle/bin" \
   "$bundle/share/applications" \

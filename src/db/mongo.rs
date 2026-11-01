@@ -45,6 +45,9 @@ impl MongoDriver {
                 port: Some(self.config.port),
             }])
             .credential(credential)
+            // A Tailscale route forwards one loopback port to one server, so
+            // replica set discovery must not switch to member addresses.
+            .direct_connection(self.config.tailscale.then_some(true))
             .build()
     }
 

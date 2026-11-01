@@ -8,7 +8,7 @@ use super::{
 };
 use crate::db::{ConnectionConfig, DbType};
 
-pub(super) const SCHEMA_VERSION: i64 = 4;
+pub(super) const SCHEMA_VERSION: i64 = 5;
 pub(super) const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 2;
 pub(super) const STATE_TABLE: &str = "shared_connection_state";
 pub(super) const PROFILES_TABLE: &str = "shared_connections";
@@ -31,9 +31,14 @@ const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 64;
 
 const PROFILE_PROJECTION: &str = "id, name, db_type, host, port, username, database_name, color, \
-    credential_ref, revision, mcp_enabled, group_name, tags_json";
+    credential_ref, revision, mcp_enabled, group_name, tags_json, use_tailscale";
+/// Schema 4 added groups and tags; schema 5 added the Tailscale route.
+const SCHEMA_4_PROFILE_PROJECTION: &str =
+    "id, name, db_type, host, port, username, database_name, \
+    color, credential_ref, revision, mcp_enabled, group_name, tags_json, 0 AS use_tailscale";
 const LEGACY_PROFILE_PROJECTION: &str = "id, name, db_type, host, port, username, database_name, \
-    color, credential_ref, revision, mcp_enabled, NULL AS group_name, '[]' AS tags_json";
+    color, credential_ref, revision, mcp_enabled, NULL AS group_name, '[]' AS tags_json, \
+    0 AS use_tailscale";
 
 pub(super) fn profile_select(suffix: &str) -> String {
     format!("SELECT {PROFILE_PROJECTION} FROM {PROFILES_TABLE} {suffix}")
@@ -42,6 +47,8 @@ pub(super) fn profile_select(suffix: &str) -> String {
 pub(super) fn profile_select_for_schema(schema_version: i64) -> String {
     let projection = if schema_version >= SCHEMA_VERSION {
         PROFILE_PROJECTION
+    } else if schema_version == 4 {
+        SCHEMA_4_PROFILE_PROJECTION
     } else {
         LEGACY_PROFILE_PROJECTION
     };
@@ -85,6 +92,7 @@ pub(super) fn profile_from_config(
         has_credential,
         revision,
         mcp_enabled,
+        tailscale: config.tailscale,
     }
 }
 
@@ -124,6 +132,7 @@ pub(super) fn row_to_record(
             has_credential: credential_ref.is_some(),
             revision: row.try_get("revision")?,
             mcp_enabled: row.try_get("mcp_enabled")?,
+            tailscale: row.try_get("use_tailscale")?,
         },
         credential_ref,
     })
@@ -300,6 +309,7 @@ pub(super) fn credential_scope(
         update_digest_field(&mut digest, &[u8::from(profile.has_credential)]);
         update_digest_field(&mut digest, &profile.revision.to_be_bytes());
         update_digest_field(&mut digest, &[u8::from(profile.mcp_enabled)]);
+        update_digest_field(&mut digest, &[u8::from(profile.tailscale)]);
     }
     let digest = digest.finish();
     let mut profile_digest = String::with_capacity(digest.as_ref().len() * 2);

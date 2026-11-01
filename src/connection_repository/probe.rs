@@ -361,6 +361,7 @@ mod tests {
             password: password.to_string(),
             database: Some("analytics".to_string()),
             color: Some("#336791".to_string()),
+            tailscale: false,
         }
     }
 

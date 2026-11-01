@@ -237,6 +237,7 @@ async fn service_executes_create_rename_and_drop_on_one_live_session() {
                 password: String::new(),
                 database: None,
                 color: None,
+                tailscale: false,
             },
             false,
         )
