@@ -124,8 +124,8 @@ impl SharedConnectionRepository {
         let result = sqlx::query(
             "INSERT INTO shared_connections \
              (id, name, db_type, host, port, username, database_name, color, \
-              credential_ref, revision, mcp_enabled, group_name, tags_json) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              credential_ref, revision, mcp_enabled, group_name, tags_json, use_tailscale) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&config.id)
         .bind(&config.name)
@@ -140,6 +140,7 @@ impl SharedConnectionRepository {
         .bind(mcp_enabled)
         .bind(group_name)
         .bind(serialize_tags(tags)?)
+        .bind(config.tailscale)
         .execute(&mut *transaction)
         .await;
         if let Err(error) = result {
@@ -260,7 +261,7 @@ impl SharedConnectionRepository {
             "UPDATE shared_connections SET \
                 name = ?, db_type = ?, host = ?, port = ?, username = ?, \
                 database_name = ?, color = ?, credential_ref = ?, revision = ?, mcp_enabled = ?, \
-                group_name = ?, tags_json = ? \
+                group_name = ?, tags_json = ?, use_tailscale = ? \
              WHERE id = ? AND revision = ?",
         )
         .bind(&update.config.name)
@@ -275,6 +276,7 @@ impl SharedConnectionRepository {
         .bind(update.mcp_enabled)
         .bind(update.group_name)
         .bind(serialize_tags(update.tags)?)
+        .bind(update.config.tailscale)
         .bind(&update.config.id)
         .bind(update.expected_revision)
         .execute(&mut *transaction)

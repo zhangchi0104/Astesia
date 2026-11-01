@@ -19,6 +19,7 @@ async fn manual_batches_commit_rollback_and_retirement_are_isolated() {
         password: String::new(),
         database: None,
         color: None,
+        tailscale: false,
     };
     let mut driver = create_driver(&config);
     driver.connect().await.unwrap();

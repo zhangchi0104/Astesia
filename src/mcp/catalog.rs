@@ -81,7 +81,10 @@ pub(super) struct PreparedConnectionTest {
 
 impl PreparedConnectionTest {
     pub async fn run(self) -> Result<(), CatalogError> {
-        create_driver(&self.config)
+        let config = crate::tailnet::route(self.config)
+            .await
+            .map_err(|error| CatalogError::Message(format!("测试连接失败: {error:#}")))?;
+        create_driver(&config)
             .test_connection()
             .await
             .map(|_| ())
@@ -233,6 +236,9 @@ impl Catalog {
         let _usage_lease = self.repository.acquire_mcp_usage(connection_id)?;
         let profile = self.profile(connection_id).await?;
         let config = self.resolved_config(&profile).await?;
+        let config = crate::tailnet::route(config)
+            .await
+            .map_err(|error| CatalogError::Message(format!("测试连接失败: {error:#}")))?;
         create_driver(&config)
             .test_connection()
             .await
@@ -541,6 +547,7 @@ mod tests {
                 password: String::new(),
                 database: Some("analytics".into()),
                 color: None,
+                tailscale: false,
             },
             has_credential: true,
             revision: 1,

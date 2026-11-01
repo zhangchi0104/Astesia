@@ -45,6 +45,8 @@ pub struct SharedConnectionProfile {
     pub has_credential: bool,
     pub revision: i64,
     pub mcp_enabled: bool,
+    #[serde(default)]
+    pub tailscale: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -71,6 +73,7 @@ impl SharedConnectionProfile {
             password: String::new(),
             database: self.database.clone(),
             color: self.color.clone(),
+            tailscale: self.tailscale,
         }
     }
 
@@ -662,6 +665,7 @@ mod tests {
             password: password.to_string(),
             database: Some("analytics".to_string()),
             color: Some("#336791".to_string()),
+            tailscale: false,
         }
     }
 
@@ -743,6 +747,40 @@ mod tests {
                 .password,
             "super-secret"
         );
+    }
+
+    #[tokio::test]
+    async fn tailscale_route_round_trips_without_replacing_the_credential() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let vault = MemoryCredentialVault::shared();
+        let repository = repository(&temp_dir, vault.clone());
+        let created = repository
+            .create(config("analytics", "super-secret"), true)
+            .await
+            .expect("create");
+        assert!(!created.tailscale);
+
+        let mut routed = config("analytics", "");
+        routed.tailscale = true;
+        let updated = repository
+            .save(SaveConnectionRequest {
+                config: routed,
+                expected_revision: Some(created.revision),
+                mcp_enabled: true,
+                group_name: None,
+                tags: Vec::new(),
+            })
+            .await
+            .expect("enable tailscale");
+        assert!(updated.tailscale);
+        assert_eq!(repository.list().await.expect("list")[0], updated);
+
+        let (resolved, _) = repository
+            .resolve_config("analytics")
+            .await
+            .expect("resolve");
+        assert!(resolved.tailscale);
+        assert_eq!(resolved.password, "super-secret");
     }
 
     #[tokio::test]

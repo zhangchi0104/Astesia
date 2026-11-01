@@ -16,6 +16,7 @@ fn sqlite_config(id: &str) -> ConnectionConfig {
         password: String::new(),
         database: None,
         color: None,
+        tailscale: false,
     }
 }
 

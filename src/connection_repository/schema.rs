@@ -45,7 +45,8 @@ pub(super) async fn initialize_schema(pool: &SqlitePool) -> Result<(), Connectio
             revision INTEGER NOT NULL CHECK (revision >= 0),
             mcp_enabled INTEGER NOT NULL DEFAULT 1 CHECK (mcp_enabled IN (0, 1)),
             group_name TEXT,
-            tags_json TEXT NOT NULL DEFAULT '[]'
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            use_tailscale INTEGER NOT NULL DEFAULT 0 CHECK (use_tailscale IN (0, 1))
         )"
     );
     sqlx::query(&create_profiles)
@@ -54,6 +55,12 @@ pub(super) async fn initialize_schema(pool: &SqlitePool) -> Result<(), Connectio
         .map_err(|error| ConnectionRepositoryError::from_sqlx(error, "初始化连接表"))?;
     ensure_shared_connections_column(pool, "group_name", "TEXT").await?;
     ensure_shared_connections_column(pool, "tags_json", "TEXT NOT NULL DEFAULT '[]'").await?;
+    ensure_shared_connections_column(
+        pool,
+        "use_tailscale",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (use_tailscale IN (0, 1))",
+    )
+    .await?;
     let create_meta = format!(
         "CREATE TABLE IF NOT EXISTS {META_TABLE} (
             key TEXT PRIMARY KEY NOT NULL,
@@ -262,6 +269,7 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].group_name, None);
         assert!(profiles[0].tags.is_empty());
+        assert!(!profiles[0].tailscale);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("PRAGMA user_version")
                 .fetch_one(

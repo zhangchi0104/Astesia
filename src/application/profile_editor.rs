@@ -112,6 +112,7 @@ pub(crate) struct ProfileDraft {
     pub(crate) group_name: String,
     pub(crate) tags: String,
     pub(crate) color: String,
+    pub(crate) tailscale: bool,
 }
 
 pub(crate) struct ValidatedProfile {
@@ -158,6 +159,7 @@ impl ProfileDraft {
             });
         }
 
+        let tailscale = self.tailscale && matches!(spec, EngineProfileSpec::Network { .. });
         let (port, username, password, database) = match spec {
             EngineProfileSpec::File { .. } => (0, String::new(), String::new(), None),
             EngineProfileSpec::Network { default_port, .. } => {
@@ -213,6 +215,7 @@ impl ProfileDraft {
                     password,
                     database,
                     color,
+                    tailscale,
                 },
                 expected_revision: origin.expected_revision(),
                 mcp_enabled: origin.mcp_enabled(),
@@ -292,6 +295,7 @@ mod tests {
             group_name: String::new(),
             tags: String::new(),
             color: String::new(),
+            tailscale: false,
         }
         .validate(&origin)
         .expect("draft is valid");
@@ -337,6 +341,7 @@ mod tests {
                 group_name: "Milestone 3".to_string(),
                 tags: "native, smoke".to_string(),
                 color: String::new(),
+                tailscale: false,
             };
 
             let profile = draft

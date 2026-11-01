@@ -67,6 +67,10 @@ pub struct ConnectionConfig {
     pub password: String,
     pub database: Option<String>,
     pub color: Option<String>,
+    /// Reach the host through the embedded Tailscale node instead of the
+    /// system network.
+    #[serde(default)]
+    pub tailscale: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

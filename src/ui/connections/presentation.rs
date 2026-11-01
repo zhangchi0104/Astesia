@@ -75,6 +75,7 @@ mod tests {
             has_credential: false,
             revision: 1,
             mcp_enabled: false,
+            tailscale: false,
         }
     }
 

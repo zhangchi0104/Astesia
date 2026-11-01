@@ -626,6 +626,7 @@ mod tests {
             password: String::new(),
             database: Some("analytics".to_string()),
             color: None,
+            tailscale: false,
         }
     }
 

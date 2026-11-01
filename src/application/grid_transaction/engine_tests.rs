@@ -12,6 +12,7 @@ async fn exercise(engine: DbType, port: u16, username: &str, password: String) {
         password,
         database: (engine != DbType::SQLServer).then(|| "astesia_figma".into()),
         color: None,
+        tailscale: false,
     });
     driver.connect().await.unwrap();
     if engine == DbType::SQLServer {
