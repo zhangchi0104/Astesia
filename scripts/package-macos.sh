@@ -25,6 +25,14 @@ bundle="$stage/Astesia.app"
 trap 'rm -rf "$stage"' EXIT
 
 rustup target add --toolchain "$toolchain" "$target"
+
+# libtailscale-sys passes the cc crate's compiler command to Go as CC when
+# cross-compiling (x86_64 on an arm64 runner). That command includes -Wextra,
+# and Go builds runtime/cgo with -Werror, so unused-parameter warnings fail the
+# build. Setting the target's CFLAGS stops cc from adding -Wall -Wextra.
+if [ "$target" = "x86_64-apple-darwin" ]; then
+  export CFLAGS_x86_64_apple_darwin="${CFLAGS_x86_64_apple_darwin:--Wno-unused-parameter}"
+fi
 rustup run "$toolchain" cargo build --release --locked --manifest-path "$manifest" --target "$target" \
   --features tailscale --bin astesia --bin astesia-mcp
 
