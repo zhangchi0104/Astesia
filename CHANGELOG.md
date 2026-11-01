@@ -1,3 +1,9 @@
+## [2.4.0](https://github.com/zhangchi0104/Astesia/compare/v2.3.2...v2.4.0) (2026-11-01)
+
+### Features
+
+* connect to databases through a built-in Tailscale node ([d5ec397](https://github.com/zhangchi0104/Astesia/commit/d5ec3974d5c8a1c6454efe005f5a3b2e76600f00))
+
 ## [2.3.2](https://github.com/zhangchi0104/Astesia/compare/v2.3.1...v2.3.2) (2026-11-01)
 
 ### Bug Fixes
