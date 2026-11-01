@@ -1,3 +1,9 @@
+## [2.3.2](https://github.com/zhangchi0104/Astesia/compare/v2.3.1...v2.3.2) (2026-11-01)
+
+### Bug Fixes
+
+* make Refresh run the WHERE and ORDER BY shown in the filter bar ([56841a8](https://github.com/zhangchi0104/Astesia/commit/56841a8f063babc93ea9e8945b95e70cadd23127))
+
 ## [2.3.1](https://github.com/zhangchi0104/Astesia/compare/v2.3.0...v2.3.1) (2026-10-30)
 
 ### Bug Fixes
