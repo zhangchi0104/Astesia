@@ -1,3 +1,9 @@
+## [2.5.2](https://github.com/zhangchi0104/Astesia/compare/v2.5.1...v2.5.2) (2026-11-02)
+
+### Bug Fixes
+
+* reach databases behind subnet routers and report tailnet dial errors ([4ac864d](https://github.com/zhangchi0104/Astesia/commit/4ac864ddbcf61d07b5890cd0e8301a4ae3be9d98))
+
 ## [2.5.1](https://github.com/zhangchi0104/Astesia/compare/v2.5.0...v2.5.1) (2026-11-02)
 
 ### Bug Fixes
