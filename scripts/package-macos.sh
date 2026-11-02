@@ -73,7 +73,17 @@ if [ -n "${NOTARY_API_KEY_PATH:-}" ]; then
     --key-id "${NOTARY_API_KEY_ID:?NOTARY_API_KEY_ID is required}" \
     --issuer "${NOTARY_API_ISSUER:?NOTARY_API_ISSUER is required}" \
     --wait --timeout 30m
-  xcrun stapler staple "$bundle"
+  # Stapling fetches the ticket from Apple's CloudKit, which sometimes drops
+  # the connection right after notarization; retry before failing the build.
+  for attempt in 1 2 3 4; do
+    if xcrun stapler staple "$bundle"; then
+      break
+    fi
+    if [ "$attempt" -eq 4 ]; then
+      exit 1
+    fi
+    sleep $((attempt * 15))
+  done
   spctl --assess --type execute --verbose=2 "$bundle"
   # Re-archive so the shipped bundle carries the stapled ticket.
   rm -f "$archive"
