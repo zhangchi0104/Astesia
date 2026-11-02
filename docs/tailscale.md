@@ -1,7 +1,7 @@
 # Built-in Tailscale
 
 Astesia can reach a database through its own embedded Tailscale node instead of
-the machine's network. The embedded node signs in separately from the Tailscale
+the machine's network. The node joins the tailnet as a separate machine. The embedded node signs in separately from the Tailscale
 client installed on the machine. For example, the system client can stay on a
 personal tailnet while Astesia reaches databases on a work tailnet.
 
@@ -13,11 +13,26 @@ personal tailnet while Astesia reaches databases on a work tailnet.
 3. Connect. The first time, Astesia opens the Tailscale sign-in page in the
    browser and waits up to five minutes for the sign-in to finish.
 
-To sign in ahead of time, or to see which account and tailnet the node uses,
-open **Settings → Tailscale** (the gear in the status bar, or ⌘, / Ctrl+,).
 
-If the tailnet requires device approval, approve the device named `astesia` in
-the Tailscale admin console and connect again.
+If the tailnet requires device approval, approve the device in the Tailscale
+admin console and connect again.
+
+## Settings → Tailscale
+
+Open it from the gear in the status bar, or with ⌘, / Ctrl+,.
+
+- **Sign In… / Sign Out…** shows the signed-in account and switches accounts.
+- **Connect on Launch** starts the node when Astesia opens, so the device stays
+  online on the tailnet even before a Tailscale connection is used.
+- **Tailscale Address** shows the device's MagicDNS name and tailnet address.
+- **Tags** lists the tags a tailnet admin set on the device. Tags are managed in
+  the Tailscale admin console.
+- **Preferred Hostname** is the machine name on the tailnet. It defaults to
+  `<computer name>-astesia`. Press Return to save; a running node is renamed
+  right away.
+
+These settings are stored in `astesia-settings.json` in the node's state
+directory.
 
 The MCP server (`astesia-mcp`) runs its own node, because two processes cannot
 share one node's state. When that node is not signed in, the connection error

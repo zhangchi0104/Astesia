@@ -8,10 +8,13 @@ use gpui_kit::{
     Task, TitlebarOptions, WeakEntity, WindowBounds, WindowOptions,
 };
 
+use super::input_field::InputField;
 use super::localization::{text, theme_label};
 use super::shell::ShellSettings;
 use crate::platform::{ThemePreference, UiLanguage};
-use crate::tailnet::{TailnetIdentity, TailnetState};
+use crate::tailnet::TailnetState;
+use gpui_kit::component::input::InputEvent;
+use gpui_kit::component::switch::Switch;
 
 actions!(astesia_settings, [CloseSettingsWindow]);
 
@@ -85,8 +88,13 @@ struct SettingsWindow {
     tailscale_state: Option<TailnetState>,
     tailscale_action: Option<TailscaleAction>,
     tailscale_error: Option<String>,
+    /// The machine name the node uses on the tailnet.
+    hostname: String,
+    hostname_input: Entity<InputField>,
+    connect_on_launch: bool,
     _tailscale_refresh: Task<()>,
     _workspace_release: Subscription,
+    _hostname_events: Subscription,
 }
 
 impl SettingsWindow {
@@ -107,6 +115,20 @@ impl SettingsWindow {
                 .timer(TAILSCALE_REFRESH_INTERVAL)
                 .await;
         });
+        let tailnet_settings = crate::tailnet::settings();
+        let hostname = tailnet_settings.effective_hostname();
+        let default_hostname = crate::tailnet::default_hostname();
+        let hostname_input = cx.new(|cx| {
+            let field = InputField::new(window, cx, &default_hostname).code_value();
+            field.set_text(hostname.clone(), window, cx);
+            field
+        });
+        let hostname_events =
+            cx.subscribe_in(&hostname_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    this.commit_hostname(window, cx);
+                }
+            });
         Self {
             settings: settings.downgrade(),
             section: SettingsSection::General,
@@ -115,8 +137,12 @@ impl SettingsWindow {
             tailscale_state: None,
             tailscale_action: None,
             tailscale_error: None,
+            hostname,
+            hostname_input,
+            connect_on_launch: tailnet_settings.connect_on_launch,
             _tailscale_refresh: tailscale_refresh,
             _workspace_release: workspace_release,
+            _hostname_events: hostname_events,
         }
     }
 
@@ -202,6 +228,65 @@ impl SettingsWindow {
             this.update(cx, |this, cx| {
                 this.tailscale_action = None;
                 this.tailscale_error = result.err();
+                this.refresh_tailscale(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn commit_hostname(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.hostname_input.read(cx).text(cx);
+        if input.trim() == self.hostname {
+            return;
+        }
+        let save = super::runtime::spawn(
+            cx,
+            async move { crate::tailnet::set_hostname(&input).await },
+        );
+        let window_handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let result = match save.await {
+                Ok(result) => result.map_err(|error| format!("{error:#}")),
+                Err(error) => Err(error.to_string()),
+            };
+            cx.update_window(window_handle, |_, window, cx| {
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(hostname) => {
+                            this.hostname = hostname;
+                            this.tailscale_error = None;
+                        }
+                        Err(error) => this.tailscale_error = Some(error),
+                    }
+                    let hostname = this.hostname.clone();
+                    this.hostname_input
+                        .update(cx, |field, cx| field.set_text(hostname, window, cx));
+                    this.refresh_tailscale(cx);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn set_connect_on_launch(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.connect_on_launch = enabled;
+        cx.notify();
+        let save = super::runtime::spawn(cx, crate::tailnet::set_connect_on_launch(enabled));
+        cx.spawn(async move |this, cx| {
+            let result = match save.await {
+                Ok(result) => result.map_err(|error| format!("{error:#}")),
+                Err(error) => Err(error.to_string()),
+            };
+            this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    this.tailscale_error = Some(error);
+                    this.connect_on_launch = crate::tailnet::settings().connect_on_launch;
+                }
                 this.refresh_tailscale(cx);
                 cx.notify();
             })
@@ -304,15 +389,7 @@ impl SettingsWindow {
     }
 
     fn render_tailscale(&self, language: UiLanguage, cx: &mut Context<Self>) -> AnyElement {
-        let intro = text(
-            language,
-            "内置 Tailscale 使用独立的账户，与系统中安装的 Tailscale 客户端互不影响。勾选了“通过内置 Tailscale 连接”的数据库连接会通过它访问。",
-            "Built-in Tailscale signs in with its own account, separate from the Tailscale client installed on this computer. Connections with “Connect through built-in Tailscale” turned on go through it.",
-        );
-        let mut section = v_flex()
-            .gap_4()
-            .child(section_title("Tailscale"))
-            .child(Label::new(intro).size(LabelSize::Small).color(Color::Muted));
+        let mut section = v_flex().gap_4().child(section_title("Tailscale"));
 
         let state = self.tailscale_state.clone();
         if state == Some(TailnetState::Unavailable) {
@@ -330,45 +407,96 @@ impl SettingsWindow {
                 .into_any_element();
         }
 
-        let (status, detail) = tailscale_status_text(language, state.as_ref());
-        section = section.child(setting_row(
-            text(language, "状态", "Status"),
-            detail,
-            Label::new(status).size(LabelSize::Small),
+        let identity = match &state {
+            Some(TailnetState::Running(identity)) => Some(identity.clone()),
+            _ => None,
+        };
+        let mut card = card(cx).child(self.render_account_row(language, state.as_ref(), cx));
+
+        let weak = cx.entity().downgrade();
+        card = card.child(card_row(
+            text(language, "启动时连接", "Connect on Launch"),
+            Some(match language {
+                UiLanguage::Chinese => {
+                    format!(
+                        "打开 Astesia 时让 {} 在 tailnet 上保持在线。",
+                        self.hostname
+                    )
+                }
+                UiLanguage::English => format!(
+                    "Keep {} online on your tailnet while Astesia is open.",
+                    self.hostname
+                ),
+            }),
+            Switch::new("settings-tailscale-connect-on-launch")
+                .checked(self.connect_on_launch)
+                .accessibility_label(text(language, "启动时连接", "Connect on Launch"))
+                .on_click(move |checked, _, cx| {
+                    weak.update(cx, |this, cx| this.set_connect_on_launch(*checked, cx))
+                        .ok();
+                }),
             cx,
         ));
 
-        if let Some(TailnetState::Running(identity)) = &state {
-            section = section.children(identity_rows(language, identity, cx));
+        if let Some(identity) = &identity {
+            if let Some(tailnet) = identity.tailnet.clone() {
+                card = card.child(card_row("Tailnet", None, value_label(tailnet, cx), cx));
+            }
+            let address = identity
+                .dns_name
+                .iter()
+                .cloned()
+                .chain(identity.addresses.iter().take(1).cloned())
+                .collect::<Vec<_>>();
+            if !address.is_empty() {
+                card = card.child(card_row(
+                    text(language, "Tailscale 地址", "Tailscale Address"),
+                    None,
+                    v_flex()
+                        .items_end()
+                        .children(address.into_iter().map(|line| value_label(line, cx))),
+                    cx,
+                ));
+            }
         }
 
-        let signed_in = matches!(state, Some(TailnetState::Running(_)));
-        let busy = self.tailscale_action.is_some();
-        let action_button = if signed_in {
-            Button::new(
-                "settings-tailscale-sign-out",
-                text(language, "退出登录", "Sign Out"),
-            )
-            .size(ButtonSize::Compact)
-            .loading(self.tailscale_action == Some(TailscaleAction::SigningOut))
-            .disabled(busy)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.run_tailscale_action(TailscaleAction::SigningOut, cx);
-            }))
-        } else {
-            Button::new(
-                "settings-tailscale-sign-in",
-                text(language, "登录", "Sign In"),
-            )
-            .size(ButtonSize::Compact)
-            .style(ButtonStyle::Filled)
-            .loading(self.tailscale_action == Some(TailscaleAction::SigningIn))
-            .disabled(busy || state.is_none())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.run_tailscale_action(TailscaleAction::SigningIn, cx);
-            }))
-        };
-        section = section.child(h_flex().gap_2().child(action_button));
+        let tags = identity
+            .as_ref()
+            .filter(|identity| !identity.tags.is_empty())
+            .map(|identity| identity.tags.join(", "))
+            .unwrap_or_else(|| text(language, "无", "None").to_string());
+        card = card.child(card_row(
+            text(language, "标签", "Tags"),
+            None,
+            h_flex()
+                .gap_1p5()
+                .child(Label::new(tags).size(LabelSize::Small).color(Color::Muted))
+                .child(help_badge(
+                    "settings-tailscale-tags-help",
+                    text(
+                        language,
+                        "标签由 tailnet 管理员在 Tailscale 管理后台为设备设置。带标签的设备按标签而不是账户授权访问。",
+                        "A tailnet admin sets tags on the device in the Tailscale admin console. A tagged device gets access by its tags instead of by account.",
+                    ),
+                    cx,
+                )),
+            cx,
+        ));
+
+        card = card.child(card_row(
+            text(language, "首选主机名", "Preferred Hostname"),
+            Some(
+                text(
+                    language,
+                    "用于生成 Tailscale 地址。按回车保存。",
+                    "Used to generate the Tailscale address. Press Return to save.",
+                )
+                .to_string(),
+            ),
+            div().w(px(240.0)).child(self.hostname_input.clone()),
+            cx,
+        ));
+        section = section.child(card);
 
         if self.tailscale_action == Some(TailscaleAction::SigningIn) {
             section = section.child(notice(
@@ -389,77 +517,255 @@ impl SettingsWindow {
         if let Some(error) = self.tailscale_error.clone().or(status_error) {
             section = section.child(notice(NoticeTone::Error, error, cx));
         }
-        section.into_any_element()
+        section
+            .child(
+                Label::new(text(
+                    language,
+                    "Astesia 作为一台独立的设备加入 tailnet，使用自己的账户，与系统中安装的 Tailscale 客户端互不影响。勾选了“通过内置 Tailscale 连接”的数据库连接会经由这台设备访问。",
+                    "Astesia joins the tailnet as its own device with its own account, separate from the Tailscale client installed on this computer. Connections with “Connect through built-in Tailscale” turned on go through this device.",
+                ))
+                .size(LabelSize::XSmall)
+                .color(Color::Muted),
+            )
+            .into_any_element()
+    }
+
+    fn render_account_row(
+        &self,
+        language: UiLanguage,
+        state: Option<&TailnetState>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (title, subtitle) = account_summary(language, state, &self.hostname);
+        let signed_in = matches!(state, Some(TailnetState::Running(_)));
+        let busy = self.tailscale_action.is_some();
+        let button = if signed_in {
+            Button::new(
+                "settings-tailscale-sign-out",
+                text(language, "退出登录…", "Sign Out…"),
+            )
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Filled)
+            .loading(self.tailscale_action == Some(TailscaleAction::SigningOut))
+            .disabled(busy)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.run_tailscale_action(TailscaleAction::SigningOut, cx);
+            }))
+        } else {
+            Button::new(
+                "settings-tailscale-sign-in",
+                text(language, "登录…", "Sign In…"),
+            )
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Filled)
+            .loading(self.tailscale_action == Some(TailscaleAction::SigningIn))
+            .disabled(busy || state.is_none())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.run_tailscale_action(TailscaleAction::SigningIn, cx);
+            }))
+        };
+        let colors = cx.theme().colors();
+        h_flex()
+            .w_full()
+            .gap_3()
+            .px_4()
+            .py_3()
+            .border_b_1()
+            .border_color(colors.border)
+            .child(tailscale_mark(cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .when_some(subtitle, |column, subtitle| {
+                        column.child(
+                            Label::new(subtitle)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
+            )
+            .child(div().flex_none().child(button))
     }
 }
 
-fn tailscale_status_text(
+/// Title and subtitle of the account row at the top of the Tailscale card.
+fn account_summary(
     language: UiLanguage,
     state: Option<&TailnetState>,
-) -> (&'static str, Option<&'static str>) {
+    hostname: &str,
+) -> (String, Option<String>) {
     match state {
-        None => (text(language, "正在读取…", "Checking…"), None),
-        Some(TailnetState::Unavailable) => (text(language, "不可用", "Unavailable"), None),
+        None => (
+            "Tailscale".to_string(),
+            Some(text(language, "正在读取状态…", "Checking status…").to_string()),
+        ),
+        Some(TailnetState::Unavailable) => (
+            text(language, "Tailscale 不可用", "Tailscale unavailable").to_string(),
+            None,
+        ),
         Some(TailnetState::NotStarted) => (
-            text(language, "未启动", "Not started"),
-            Some(text(
-                language,
-                "登录或首次使用 Tailscale 连接时启动。",
-                "Starts when you sign in or first use a Tailscale connection.",
-            )),
+            text(language, "Tailscale 未启动", "Tailscale is not running").to_string(),
+            Some(
+                text(
+                    language,
+                    "登录或打开“启动时连接”后启动。",
+                    "Starts when you sign in or turn on Connect on Launch.",
+                )
+                .to_string(),
+            ),
         ),
-        Some(TailnetState::Starting) => (text(language, "正在连接…", "Connecting…"), None),
-        Some(TailnetState::NeedsLogin) => (text(language, "未登录", "Signed out"), None),
+        Some(TailnetState::Starting) => (
+            text(language, "正在连接 Tailscale…", "Connecting to Tailscale…").to_string(),
+            None,
+        ),
+        Some(TailnetState::NeedsLogin) => (
+            text(language, "未登录 Tailscale", "Not signed in to Tailscale").to_string(),
+            Some(match language {
+                UiLanguage::Chinese => format!("登录后，这台设备以 {hostname} 加入 tailnet。"),
+                UiLanguage::English => {
+                    format!("After you sign in, this device joins the tailnet as {hostname}.")
+                }
+            }),
+        ),
         Some(TailnetState::NeedsApproval) => (
-            text(language, "等待批准", "Waiting for approval"),
-            Some(text(
-                language,
-                "请在 Tailscale 管理后台批准名为 astesia 的设备。",
-                "Approve the device named astesia in the Tailscale admin console.",
-            )),
+            text(language, "等待管理员批准", "Waiting for approval").to_string(),
+            Some(match language {
+                UiLanguage::Chinese => {
+                    format!("请在 Tailscale 管理后台批准名为 {hostname} 的设备。")
+                }
+                UiLanguage::English => {
+                    format!("Approve the device named {hostname} in the Tailscale admin console.")
+                }
+            }),
         ),
-        Some(TailnetState::Running(_)) => (text(language, "已连接", "Connected"), None),
+        Some(TailnetState::Running(identity)) => (
+            text(language, "已登录 Tailscale", "Signed in to Tailscale").to_string(),
+            identity.account.as_ref().map(|account| match language {
+                UiLanguage::Chinese => format!("登录账户：{account}"),
+                UiLanguage::English => format!("Signed in as {account}"),
+            }),
+        ),
         Some(TailnetState::Failed(_)) => (
-            text(language, "出错", "Error"),
-            Some(text(
-                language,
-                "无法读取状态，详情见下方。",
-                "Could not read the status. See the details below.",
-            )),
+            text(language, "Tailscale 出错", "Tailscale error").to_string(),
+            Some(
+                text(
+                    language,
+                    "无法读取状态，详情见下方。",
+                    "Could not read the status. See the details below.",
+                )
+                .to_string(),
+            ),
         ),
     }
 }
 
-fn identity_rows(
-    language: UiLanguage,
-    identity: &TailnetIdentity,
+fn card(cx: &mut Context<SettingsWindow>) -> Div {
+    let colors = cx.theme().colors();
+    v_flex()
+        .w_full()
+        .rounded_lg()
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.surface_background)
+        .overflow_hidden()
+}
+
+fn card_row(
+    label: &'static str,
+    detail: Option<String>,
+    control: impl IntoElement,
     cx: &mut Context<SettingsWindow>,
-) -> Vec<AnyElement> {
-    let rows = [
-        (text(language, "账户", "Account"), identity.account.clone()),
-        ("Tailnet", identity.tailnet.clone()),
-        (
-            text(language, "设备名", "Device name"),
-            identity.dns_name.clone(),
-        ),
-        (
-            text(language, "地址", "Addresses"),
-            (!identity.addresses.is_empty()).then(|| identity.addresses.join(", ")),
-        ),
-    ];
-    rows.into_iter()
-        .filter_map(|(label, value)| {
-            value.map(|value| {
-                setting_row(
-                    label,
-                    None,
-                    Label::new(value).size(LabelSize::Small).buffer_font(cx),
-                    cx,
-                )
-                .into_any_element()
-            })
-        })
-        .collect()
+) -> impl IntoElement {
+    let colors = cx.theme().colors();
+    h_flex()
+        .w_full()
+        .gap_4()
+        .px_4()
+        .py_2p5()
+        .border_b_1()
+        .border_color(colors.border)
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .child(Label::new(label).size(LabelSize::Small))
+                .when_some(detail, |column, detail| {
+                    column.child(
+                        Label::new(detail)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                }),
+        )
+        .child(h_flex().flex_none().justify_end().child(control))
+}
+
+fn value_label(value: String, cx: &mut Context<SettingsWindow>) -> Label {
+    Label::new(value)
+        .size(LabelSize::Small)
+        .color(Color::Muted)
+        .buffer_font(cx)
+}
+
+/// A circled question mark that explains a setting on hover.
+fn help_badge(
+    id: &'static str,
+    help: &'static str,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let colors = cx.theme().colors();
+    div()
+        .id(id)
+        .size(px(16.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .border_1()
+        .border_color(colors.text_muted)
+        .text_color(colors.text_muted)
+        .text_xs()
+        .child("?")
+        .tooltip(Tooltip::text(help))
+}
+
+/// The Tailscale mark: a three-by-three dot grid in a round badge.
+fn tailscale_mark(cx: &mut Context<SettingsWindow>) -> impl IntoElement {
+    let colors = cx.theme().colors();
+    let strong = colors.text;
+    let faint = colors.text.opacity(0.25);
+    let dot = move |on: bool| {
+        div()
+            .size(px(5.0))
+            .rounded_full()
+            .bg(if on { strong } else { faint })
+    };
+    let row = move |pattern: [bool; 3]| h_flex().gap(px(3.0)).children(pattern.map(dot));
+    div()
+        .flex_none()
+        .size(px(40.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.background)
+        .child(
+            v_flex()
+                .gap(px(3.0))
+                .child(row([false, false, false]))
+                .child(row([true, true, true]))
+                .child(row([false, true, false])),
+        )
 }
 
 fn section_title(title: &'static str) -> impl IntoElement {
@@ -564,22 +870,48 @@ impl Render for SettingsWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tailnet::TailnetIdentity;
 
     #[test]
-    fn failed_status_stays_short_and_points_to_the_details() {
-        let (status, detail) = tailscale_status_text(
+    fn failed_status_points_to_the_details() {
+        let (title, subtitle) = account_summary(
             UiLanguage::English,
             Some(&TailnetState::Failed("a very long error".to_string())),
+            "box-astesia",
         );
-        assert_eq!(status, "Error");
-        assert!(detail.expect("detail").contains("details below"));
+        assert_eq!(title, "Tailscale error");
+        assert!(subtitle.expect("subtitle").contains("details below"));
     }
 
     #[test]
-    fn approval_status_explains_the_next_step() {
-        let (status, detail) =
-            tailscale_status_text(UiLanguage::Chinese, Some(&TailnetState::NeedsApproval));
-        assert_eq!(status, "等待批准");
-        assert!(detail.expect("detail").contains("astesia"));
+    fn approval_and_sign_in_name_the_device() {
+        let (title, subtitle) = account_summary(
+            UiLanguage::Chinese,
+            Some(&TailnetState::NeedsApproval),
+            "box-astesia",
+        );
+        assert_eq!(title, "等待管理员批准");
+        assert!(subtitle.expect("subtitle").contains("box-astesia"));
+        let (_, subtitle) = account_summary(
+            UiLanguage::English,
+            Some(&TailnetState::NeedsLogin),
+            "box-astesia",
+        );
+        assert!(subtitle.expect("subtitle").contains("box-astesia"));
+    }
+
+    #[test]
+    fn signed_in_summary_names_the_account() {
+        let identity = TailnetIdentity {
+            account: Some("alex@example.com".into()),
+            ..Default::default()
+        };
+        let (title, subtitle) = account_summary(
+            UiLanguage::English,
+            Some(&TailnetState::Running(identity)),
+            "box-astesia",
+        );
+        assert_eq!(title, "Signed in to Tailscale");
+        assert_eq!(subtitle.as_deref(), Some("Signed in as alex@example.com"));
     }
 }

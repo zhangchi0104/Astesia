@@ -11,9 +11,14 @@
 // Builds without the embedded node keep the target parsing for its tests.
 #![cfg_attr(not(all(unix, feature = "tailscale")), allow(dead_code))]
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use anyhow::Context as _;
+use serde::{Deserialize, Serialize};
+
 use crate::db::{ConnectionConfig, DbType};
+use crate::platform::application_data_directory;
 
 #[cfg(all(unix, feature = "tailscale"))]
 mod embedded;
@@ -58,6 +63,149 @@ pub(crate) struct TailnetIdentity {
     pub(crate) tailnet: Option<String>,
     pub(crate) dns_name: Option<String>,
     pub(crate) addresses: Vec<String>,
+    pub(crate) tags: Vec<String>,
+}
+
+/// Device settings for the desktop app's node, kept in its state directory.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub(crate) struct TailnetSettings {
+    /// The machine name on the tailnet. `None` uses [`default_hostname`].
+    pub(crate) hostname: Option<String>,
+    /// Starts the node when Astesia opens, so the device stays online.
+    pub(crate) connect_on_launch: bool,
+}
+
+impl TailnetSettings {
+    pub(crate) fn effective_hostname(&self) -> String {
+        self.hostname.clone().unwrap_or_else(default_hostname)
+    }
+}
+
+/// The desktop app and the MCP server each keep their own node: two processes
+/// must not share one tsnet state directory.
+fn state_directory() -> anyhow::Result<PathBuf> {
+    let base =
+        application_data_directory().ok_or_else(|| anyhow::anyhow!("无法确定 Astesia 数据目录"))?;
+    let name = if browser_login_enabled() {
+        "tailscale"
+    } else {
+        "tailscale-mcp"
+    };
+    Ok(base.join(name))
+}
+
+fn settings_path() -> anyhow::Result<PathBuf> {
+    Ok(state_directory()?.join("astesia-settings.json"))
+}
+
+/// Reads the node's device settings. A missing or unreadable file gives the defaults.
+pub(crate) fn settings() -> TailnetSettings {
+    settings_path()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn save_settings(settings: &TailnetSettings) -> anyhow::Result<()> {
+    let path = settings_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("无法创建 Tailscale 状态目录 {}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec_pretty(settings)?;
+    std::fs::write(&path, bytes)
+        .with_context(|| format!("无法保存 Tailscale 设置 {}", path.display()))
+}
+
+/// The machine name used when none is set: this computer's name plus
+/// `astesia`, so each computer running Astesia is its own tailnet device.
+pub(crate) fn default_hostname() -> String {
+    let suffix = if browser_login_enabled() {
+        "astesia"
+    } else {
+        "astesia-mcp"
+    };
+    match system_hostname().as_deref().and_then(normalize_hostname) {
+        Some(host) => format!("{host}-{suffix}"),
+        None => suffix.to_string(),
+    }
+}
+
+/// Turns user input into a DNS label: lowercase letters, digits and dashes,
+/// at most 63 characters. Returns `None` when nothing usable is left.
+pub(crate) fn normalize_hostname(input: &str) -> Option<String> {
+    let first_label = input.trim().split('.').next().unwrap_or_default();
+    let mut label = String::new();
+    for character in first_label.chars() {
+        let character = character.to_ascii_lowercase();
+        if character.is_ascii_alphanumeric() {
+            label.push(character);
+        } else if !label.ends_with('-') {
+            label.push('-');
+        }
+    }
+    let label: String = label.trim_matches('-').chars().take(63).collect();
+    let label = label.trim_end_matches('-').to_string();
+    (!label.is_empty()).then_some(label)
+}
+
+#[cfg(all(unix, feature = "tailscale"))]
+fn system_hostname() -> Option<String> {
+    let mut buffer = [0u8; 256];
+    // SAFETY: the buffer is valid for its whole length and gethostname
+    // writes at most that many bytes.
+    let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+    if result != 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf8(buffer[..end].to_vec()).ok()
+}
+
+#[cfg(not(all(unix, feature = "tailscale")))]
+fn system_hostname() -> Option<String> {
+    None
+}
+
+/// Saves the machine name and, when the node is running, renames the device.
+/// Returns the name now in use.
+pub(crate) async fn set_hostname(input: &str) -> anyhow::Result<String> {
+    let mut current = settings();
+    current.hostname = normalize_hostname(input).filter(|name| *name != default_hostname());
+    save_settings(&current)?;
+    let hostname = current.effective_hostname();
+    #[cfg(all(unix, feature = "tailscale"))]
+    embedded::apply_hostname(&hostname).await?;
+    Ok(hostname)
+}
+
+/// Saves whether the node starts with Astesia, and starts it when turned on.
+pub(crate) async fn set_connect_on_launch(enabled: bool) -> anyhow::Result<()> {
+    let mut current = settings();
+    current.connect_on_launch = enabled;
+    save_settings(&current)?;
+    if enabled {
+        start().await?;
+    }
+    Ok(())
+}
+
+/// Starts the node without waiting for sign-in. It only comes online once
+/// it has been signed in.
+pub(crate) async fn start() -> anyhow::Result<()> {
+    #[cfg(all(unix, feature = "tailscale"))]
+    {
+        embedded::start().await
+    }
+    #[cfg(not(all(unix, feature = "tailscale")))]
+    {
+        anyhow::bail!("当前版本不包含内置 Tailscale")
+    }
 }
 
 /// Reads the embedded node's state without starting it.
@@ -200,6 +348,34 @@ impl TailnetTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostnames_are_normalized_to_one_dns_label() {
+        assert_eq!(
+            normalize_hostname("Alex's MacBook Pro.local").as_deref(),
+            Some("alex-s-macbook-pro")
+        );
+        assert_eq!(
+            normalize_hostname("  db_gateway  ").as_deref(),
+            Some("db-gateway")
+        );
+        assert_eq!(normalize_hostname("---").as_deref(), None);
+        assert_eq!(normalize_hostname("").as_deref(), None);
+        assert_eq!(
+            normalize_hostname(&"a".repeat(80)).map(|name| name.len()),
+            Some(63)
+        );
+    }
+
+    #[test]
+    fn settings_tolerate_missing_fields() {
+        let settings: TailnetSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings, TailnetSettings::default());
+        let settings: TailnetSettings =
+            serde_json::from_str(r#"{"hostname":"db-box","connect_on_launch":true}"#).unwrap();
+        assert_eq!(settings.effective_hostname(), "db-box");
+        assert!(settings.connect_on_launch);
+    }
 
     fn config(db_type: DbType, host: &str, port: u16) -> ConnectionConfig {
         ConnectionConfig {

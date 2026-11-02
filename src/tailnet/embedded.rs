@@ -8,7 +8,6 @@ use std::{
         fs::OpenOptionsExt,
         io::{FromRawFd, IntoRawFd},
     },
-    path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -17,8 +16,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use tokio::{net::TcpListener, sync::OnceCell};
 
-use super::{TailnetIdentity, TailnetState};
-use crate::platform::application_data_directory;
+use super::{state_directory, TailnetIdentity, TailnetState};
 
 /// How long a connection waits for the user to finish signing in.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -28,8 +26,6 @@ const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// How long a node that needs sign-in may go without a sign-in URL before one is requested.
 const NEW_LOGIN_GRACE: Duration = Duration::from_secs(3);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
-const NODE_HOSTNAME: &str = "astesia";
-
 /// The node lives for the rest of the process: libtailscale 0.2.2 crashes when
 /// a server is closed, and every forwarder borrows it.
 static NODE: OnceCell<Node> = OnceCell::const_new();
@@ -81,6 +77,8 @@ struct SelfNode {
     dns_name: String,
     #[serde(rename = "UserID", default)]
     user_id: i64,
+    #[serde(default, deserialize_with = "null_as_default")]
+    tags: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -107,6 +105,11 @@ impl Status {
                     .and_then(|node| self.user.get(&node.user_id.to_string()))
                     .map(|user| user.login_name.clone())
                     .filter(|name| !name.is_empty());
+                let tags = self
+                    .self_node
+                    .as_ref()
+                    .map(|node| node.tags.clone())
+                    .unwrap_or_default();
                 TailnetState::Running(TailnetIdentity {
                     account,
                     tailnet: self
@@ -118,6 +121,7 @@ impl Status {
                         .map(|node| node.dns_name.trim_end_matches('.').to_string())
                         .filter(|name| !name.is_empty()),
                     addresses: self.tailscale_ips,
+                    tags,
                 })
             }
             "NeedsLogin" => TailnetState::NeedsLogin,
@@ -136,6 +140,22 @@ pub(super) async fn state() -> TailnetState {
         Ok(status) => status.into_state(),
         Err(error) => TailnetState::Failed(format!("{error:#}")),
     }
+}
+
+/// Starts the node if needed, without waiting for sign-in.
+pub(super) async fn start() -> anyhow::Result<()> {
+    node().await.map(|_| ())
+}
+
+/// Renames the running node on the tailnet. A node that has not started
+/// picks the name up from the settings file when it starts.
+pub(super) async fn apply_hostname(hostname: &str) -> anyhow::Result<()> {
+    let Some(node) = NODE.get() else {
+        return Ok(());
+    };
+    node.local_api
+        .patch_prefs(serde_json::json!({ "Hostname": hostname, "HostnameSet": true }))
+        .await
 }
 
 /// Starts the node if needed and waits until it is signed in.
@@ -260,10 +280,11 @@ impl Node {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Tailscale 状态目录路径不是有效的 UTF-8"))?;
 
+        let hostname = super::settings().effective_hostname();
         let mut tailscale = libtailscale::Tailscale::new();
         let configured = (|| -> Result<(), String> {
             tailscale.set_dir(directory_text)?;
-            tailscale.set_hostname(NODE_HOSTNAME)?;
+            tailscale.set_hostname(&hostname)?;
             if let Ok(control_url) = std::env::var("ASTESIA_TAILSCALE_CONTROL_URL") {
                 tailscale.set_control_url(control_url.trim())?;
             }
@@ -330,7 +351,8 @@ impl Node {
             match status.backend_state.as_str() {
                 "Running" => return Ok(()),
                 "NeedsMachineAuth" => anyhow::bail!(
-                    "Tailscale 设备等待管理员批准，请在 Tailscale 管理后台批准名为 {NODE_HOSTNAME} 的设备后重试"
+                    "Tailscale 设备等待管理员批准，请在 Tailscale 管理后台批准名为 {} 的设备后重试",
+                    super::settings().effective_hostname()
                 ),
                 "NeedsLogin" if !status.auth_url.is_empty() => {
                     if !super::browser_login_enabled() {
@@ -380,6 +402,20 @@ impl LocalApi {
         Ok(())
     }
 
+    async fn patch_prefs(&self, prefs: serde_json::Value) -> anyhow::Result<()> {
+        self.client
+            .patch(format!("{}/prefs", self.base_url))
+            .header("Sec-Tailscale", "localapi")
+            .basic_auth("", Some(&self.credential))
+            .json(&prefs)
+            .send()
+            .await
+            .context("内置 Tailscale 修改设备设置失败")?
+            .error_for_status()
+            .context("内置 Tailscale 修改设备设置失败")?;
+        Ok(())
+    }
+
     async fn status(&self) -> anyhow::Result<Status> {
         self.client
             .get(format!("{}/status?peers=false", self.base_url))
@@ -394,19 +430,6 @@ impl LocalApi {
             .await
             .context("内置 Tailscale 返回了无法识别的状态")
     }
-}
-
-/// The desktop app and the MCP server each keep their own node: two processes
-/// must not share one tsnet state directory.
-fn state_directory() -> anyhow::Result<PathBuf> {
-    let base =
-        application_data_directory().ok_or_else(|| anyhow::anyhow!("无法确定 Astesia 数据目录"))?;
-    let name = if super::browser_login_enabled() {
-        "tailscale"
-    } else {
-        "tailscale-mcp"
-    };
-    Ok(base.join(name))
 }
 
 fn open_in_browser(url: &str) {
@@ -430,7 +453,7 @@ mod tests {
                 "BackendState": "Running",
                 "AuthURL": "",
                 "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"],
-                "Self": {"DNSName": "astesia.example.ts.net.", "UserID": 42},
+                "Self": {"DNSName": "astesia.example.ts.net.", "UserID": 42, "Tags": ["tag:db"]},
                 "CurrentTailnet": {"Name": "example.com"},
                 "User": {"42": {"LoginName": "alex@example.com"}}
             }"#,
@@ -443,6 +466,7 @@ mod tests {
                 tailnet: Some("example.com".into()),
                 dns_name: Some("astesia.example.ts.net".into()),
                 addresses: vec!["100.101.102.103".into(), "fd7a:115c:a1e0::1".into()],
+                tags: vec!["tag:db".into()],
             })
         );
     }

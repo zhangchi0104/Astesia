@@ -297,6 +297,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "keyring",
+ "libc",
  "libtailscale",
  "log",
  "lsp-types",
