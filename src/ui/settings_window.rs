@@ -295,13 +295,24 @@ impl SettingsWindow {
     fn render_nav(&self, language: UiLanguage, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let item = |id: &'static str, label: &'static str, section: SettingsSection| {
-            Button::new(id, label)
+            // The kit button centers its label inside a full-width row, so the
+            // label goes in as a growing child to sit at the leading edge.
+            Button::new(id, "")
+                .aria_label(label)
                 .size(ButtonSize::Compact)
                 .style(ButtonStyle::Transparent)
                 .toggle_state(self.section == section)
                 .selected_style(ButtonStyle::Filled)
                 .w_full()
-                .justify_start()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(label),
+                )
                 .on_click(cx.listener(move |this, _, _, cx| this.select_section(section, cx)))
         };
         v_flex()
