@@ -176,6 +176,9 @@ pub(super) async fn forward(host: &str, port: u16) -> anyhow::Result<u16> {
     {
         return Ok(port);
     }
+    // Dial once up front: a driver only sees the forwarder drop the
+    // connection, so the tailnet's own reason would otherwise be lost.
+    drop(dial(node, &target).await?);
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -235,6 +238,14 @@ async fn relay(
     mut inbound: tokio::net::TcpStream,
     target: &str,
 ) -> anyhow::Result<()> {
+    let mut outbound = dial(node, target).await?;
+    let _ = inbound.set_nodelay(true);
+    tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await?;
+    Ok(())
+}
+
+/// Opens a TCP connection to `target` through the tailnet.
+async fn dial(node: &'static Node, target: &str) -> anyhow::Result<tokio::net::UnixStream> {
     let dial_target = target.to_string();
     let dial = tokio::task::spawn_blocking(move || node.tailscale.dial("tcp", &dial_target));
     let stream = tokio::time::timeout(DIAL_TIMEOUT, dial)
@@ -247,17 +258,24 @@ async fn relay(
     // SAFETY: `fd` was just released by `into_raw_fd`, so this is its only owner.
     let outbound = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
     outbound.set_nonblocking(true)?;
-    let mut outbound = tokio::net::UnixStream::from_std(outbound)?;
-    let _ = inbound.set_nodelay(true);
-    tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await?;
-    Ok(())
+    Ok(tokio::net::UnixStream::from_std(outbound)?)
 }
 
 async fn node() -> anyhow::Result<&'static Node> {
     NODE.get_or_try_init(|| async {
-        tokio::task::spawn_blocking(Node::start)
+        let node = tokio::task::spawn_blocking(Node::start)
             .await
-            .context("启动内置 Tailscale 失败")?
+            .context("启动内置 Tailscale 失败")??;
+        // Company databases often sit behind a subnet router. tsnet does not
+        // accept advertised routes by default, unlike the desktop clients.
+        if let Err(error) = node
+            .local_api
+            .patch_prefs(serde_json::json!({ "RouteAll": true, "RouteAllSet": true }))
+            .await
+        {
+            log::warn!("Could not accept Tailscale subnet routes: {error:#}");
+        }
+        Ok(node)
     })
     .await
 }

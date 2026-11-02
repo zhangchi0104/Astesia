@@ -14,6 +14,11 @@ personal tailnet while Astesia reaches databases on a work tailnet.
    browser and waits up to five minutes for the sign-in to finish.
 
 
+The node accepts subnet routes, so a database behind a subnet router (for
+example a private `10.x` address in a company VPC) is reachable too. When a
+connection fails, the error names the tailnet's reason, such as no route to
+the host.
+
 If the tailnet requires device approval, approve the device in the Tailscale
 admin console and connect again.
 
