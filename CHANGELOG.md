@@ -1,3 +1,9 @@
+## [2.5.1](https://github.com/zhangchi0104/Astesia/compare/v2.5.0...v2.5.1) (2026-11-02)
+
+### Bug Fixes
+
+* retry stapling the macOS package when CloudKit drops the connection ([7e4b1d4](https://github.com/zhangchi0104/Astesia/commit/7e4b1d46377848e0cf381dfda8d5c14d544b4bd4)), closes [#13](https://github.com/zhangchi0104/Astesia/issues/13)
+
 ## [2.5.0](https://github.com/zhangchi0104/Astesia/compare/v2.4.0...v2.5.0) (2026-11-02)
 
 ### Features
