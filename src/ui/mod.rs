@@ -90,12 +90,18 @@ fn initialize_editor_runtime(theme: crate::platform::ThemePreference, cx: &mut A
     settings_window::bind_settings_window_keys(cx);
 }
 
-/// Brings the built-in Tailscale device online when the user asked for it.
+/// Shares the built-in Tailscale node with the MCP server, and brings the
+/// device online when the user asked for it.
 fn connect_tailnet_on_launch(cx: &App) {
     if !crate::tailnet::is_available() {
         return;
     }
     drop(runtime::spawn(cx, async {
+        // The MCP server connects through this app's node, so it needs no
+        // sign-in of its own.
+        if let Err(error) = crate::tailnet::share_with_other_processes().await {
+            log::warn!("Could not share built-in Tailscale with the MCP server: {error:#}");
+        }
         if !crate::tailnet::settings().connect_on_launch {
             return;
         }

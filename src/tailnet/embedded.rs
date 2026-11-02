@@ -164,7 +164,19 @@ pub(super) async fn sign_out() -> anyhow::Result<()> {
 pub(super) async fn forward(host: &str, port: u16) -> anyhow::Result<u16> {
     let node = node().await?;
     node.wait_until_running().await?;
+    forward_on(node, host, port).await
+}
 
+/// Like [`forward`], for a request from another process such as the MCP
+/// server. It never opens the sign-in page: whoever asked cannot see this
+/// app, so a node that is not signed in fails right away.
+pub(super) async fn forward_for_other_process(host: &str, port: u16) -> anyhow::Result<u16> {
+    let node = node().await?;
+    node.wait_until_signed_in().await?;
+    forward_on(node, host, port).await
+}
+
+async fn forward_on(node: &'static Node, host: &str, port: u16) -> anyhow::Result<u16> {
     let target = if host.contains(':') {
         format!("[{host}]:{port}")
     } else {
@@ -355,7 +367,7 @@ impl Node {
                 "NeedsLogin" if !status.auth_url.is_empty() => {
                     if !super::NodeRole::current().opens_browser() {
                         anyhow::bail!(
-                            "内置 Tailscale 尚未登录，请在浏览器打开以下地址登录后重试：{}",
+                            "内置 Tailscale 尚未登录。打开 Astesia 并在“设置 → Tailscale”中登录后，MCP 会直接复用该连接；也可以在浏览器打开以下地址，为 MCP 单独登录：{}",
                             status.auth_url
                         );
                     }
@@ -380,6 +392,35 @@ impl Node {
                         status.backend_state
                     ),
                 });
+            }
+            tokio::time::sleep(STATUS_POLL_INTERVAL).await;
+        }
+    }
+}
+
+impl Node {
+    /// Waits for an already signed-in node to come up, without starting a
+    /// sign-in.
+    async fn wait_until_signed_in(&self) -> anyhow::Result<()> {
+        let started = Instant::now();
+        loop {
+            let status = self.local_api.status().await?;
+            match status.backend_state.as_str() {
+                "Running" => return Ok(()),
+                "NeedsLogin" => anyhow::bail!(
+                    "Astesia 的内置 Tailscale 尚未登录，请在 Astesia 的“设置 → Tailscale”中登录后重试"
+                ),
+                "NeedsMachineAuth" => anyhow::bail!(
+                    "Tailscale 设备等待管理员批准，请在 Tailscale 管理后台批准名为 {} 的设备后重试",
+                    super::settings().effective_hostname()
+                ),
+                _ => {}
+            }
+            if started.elapsed() > STARTUP_TIMEOUT {
+                anyhow::bail!(
+                    "Astesia 的内置 Tailscale 未能就绪（状态：{}），请检查网络后重试",
+                    status.backend_state
+                );
             }
             tokio::time::sleep(STATUS_POLL_INTERVAL).await;
         }

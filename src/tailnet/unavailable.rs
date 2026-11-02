@@ -29,3 +29,7 @@ pub(super) async fn apply_hostname(_hostname: &str) -> anyhow::Result<()> {
 pub(super) async fn forward(_host: &str, _port: u16) -> anyhow::Result<u16> {
     unavailable()
 }
+
+pub(super) async fn forward_for_other_process(_host: &str, _port: u16) -> anyhow::Result<u16> {
+    unavailable()
+}

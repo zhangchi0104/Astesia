@@ -24,9 +24,12 @@ mod embedded;
 #[cfg(not(all(unix, feature = "tailscale")))]
 #[path = "tailnet/unavailable.rs"]
 mod embedded;
+mod shared;
 
 /// Which process owns the node. Two processes must not share one tsnet state
-/// directory, so the desktop app and the MCP server each run their own node.
+/// directory. The desktop app owns the main node and shares it with other
+/// processes (see [`shared`]); the MCP server only starts a node of its own
+/// when no desktop app is running.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NodeRole {
     /// The desktop app: may open the sign-in page in the browser.
@@ -70,6 +73,19 @@ static DESKTOP_NODE: AtomicBool = AtomicBool::new(false);
 /// function in this module.
 pub(crate) fn use_desktop_node() {
     DESKTOP_NODE.store(true, Ordering::Release);
+}
+
+/// Lets other Astesia processes on this machine, such as the MCP server,
+/// connect through the desktop app's node so they need no sign-in of their
+/// own. Call it once, from the desktop app.
+pub(crate) async fn share_with_other_processes() -> anyhow::Result<()> {
+    if !is_available() {
+        return Ok(());
+    }
+    shared::serve(shared::discovery_path()?, |host, port| async move {
+        embedded::forward_for_other_process(&host, port).await
+    })
+    .await
 }
 
 /// Whether this build contains the embedded Tailscale node.
@@ -233,7 +249,16 @@ async fn route_through_tailnet(config: ConnectionConfig) -> anyhow::Result<Conne
         anyhow::bail!("当前版本不包含内置 Tailscale（仅 macOS 与 Linux 版本支持），请关闭该连接的“通过内置 Tailscale 连接”")
     }
     let target = TailnetTarget::from_config(&config)?;
-    let port = embedded::forward(&target.host, target.port).await?;
+    let port = match NodeRole::current() {
+        NodeRole::Desktop => embedded::forward(&target.host, target.port).await?,
+        NodeRole::Headless => {
+            match shared::forward(&shared::discovery_path()?, &target.host, target.port).await? {
+                Some(port) => port,
+                // No desktop app is running: use this process's own node.
+                None => embedded::forward(&target.host, target.port).await?,
+            }
+        }
+    };
     Ok(target.rewrite(config, port))
 }
 
