@@ -15,16 +15,6 @@ pub(crate) enum ThemePreference {
     System,
 }
 
-impl ThemePreference {
-    pub(crate) const fn next(self) -> Self {
-        match self {
-            Self::System => Self::Light,
-            Self::Light => Self::Dark,
-            Self::Dark => Self::System,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum UiLanguage {
     #[default]
@@ -35,13 +25,6 @@ pub(crate) enum UiLanguage {
 }
 
 impl UiLanguage {
-    pub(crate) const fn next(self) -> Self {
-        match self {
-            Self::Chinese => Self::English,
-            Self::English => Self::Chinese,
-        }
-    }
-
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::Chinese => "中文",

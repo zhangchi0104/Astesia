@@ -21,6 +21,7 @@ mod performance_item;
 mod query_item;
 mod redis_item;
 mod runtime;
+mod settings_window;
 mod shell;
 mod sql_completion;
 mod sql_language;
@@ -85,6 +86,7 @@ fn initialize_editor_runtime(theme: crate::platform::ThemePreference, cx: &mut A
     text_editor::bind_keys(cx);
     editor_search::bind_keys(cx);
     bind_workspace_keys(cx);
+    settings_window::bind_settings_window_keys(cx);
 }
 
 fn open_main_window(

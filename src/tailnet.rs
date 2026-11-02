@@ -37,6 +37,66 @@ pub(crate) const fn is_available() -> bool {
     cfg!(all(unix, feature = "tailscale"))
 }
 
+/// What the embedded node is doing, for the settings window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TailnetState {
+    /// This build does not include the embedded node.
+    Unavailable,
+    /// The node starts on the first Tailscale connection or sign-in.
+    NotStarted,
+    Starting,
+    NeedsLogin,
+    /// A tailnet admin has to approve the device.
+    NeedsApproval,
+    Running(TailnetIdentity),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TailnetIdentity {
+    pub(crate) account: Option<String>,
+    pub(crate) tailnet: Option<String>,
+    pub(crate) dns_name: Option<String>,
+    pub(crate) addresses: Vec<String>,
+}
+
+/// Reads the embedded node's state without starting it.
+pub(crate) async fn state() -> TailnetState {
+    #[cfg(all(unix, feature = "tailscale"))]
+    {
+        embedded::state().await
+    }
+    #[cfg(not(all(unix, feature = "tailscale")))]
+    {
+        TailnetState::Unavailable
+    }
+}
+
+/// Starts the embedded node and waits for it to be signed in, opening the
+/// sign-in page when needed.
+pub(crate) async fn sign_in() -> anyhow::Result<()> {
+    #[cfg(all(unix, feature = "tailscale"))]
+    {
+        embedded::sign_in().await
+    }
+    #[cfg(not(all(unix, feature = "tailscale")))]
+    {
+        anyhow::bail!("当前版本不包含内置 Tailscale")
+    }
+}
+
+/// Signs the embedded node out of its tailnet.
+pub(crate) async fn sign_out() -> anyhow::Result<()> {
+    #[cfg(all(unix, feature = "tailscale"))]
+    {
+        embedded::sign_out().await
+    }
+    #[cfg(not(all(unix, feature = "tailscale")))]
+    {
+        anyhow::bail!("当前版本不包含内置 Tailscale")
+    }
+}
+
 /// Returns the configuration a driver should use to reach `config`.
 ///
 /// Connections that do not use Tailscale are returned unchanged. Tailscale

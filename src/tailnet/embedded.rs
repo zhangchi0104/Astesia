@@ -17,6 +17,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use tokio::{net::TcpListener, sync::OnceCell};
 
+use super::{TailnetIdentity, TailnetState};
 use crate::platform::application_data_directory;
 
 /// How long a connection waits for the user to finish signing in.
@@ -24,6 +25,8 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a connection waits for an already signed-in node to come up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// How long a node that needs sign-in may go without a sign-in URL before one is requested.
+const NEW_LOGIN_GRACE: Duration = Duration::from_secs(3);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 const NODE_HOSTNAME: &str = "astesia";
 
@@ -40,16 +43,110 @@ struct Node {
 
 struct LocalApi {
     client: reqwest::Client,
-    status_url: String,
+    /// `http://<loopback>/localapi/v0`
+    base_url: String,
     credential: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Status {
-    #[serde(rename = "BackendState", default)]
+    #[serde(default)]
     backend_state: String,
     #[serde(rename = "AuthURL", default)]
     auth_url: String,
+    #[serde(rename = "TailscaleIPs", default, deserialize_with = "null_as_default")]
+    tailscale_ips: Vec<String>,
+    #[serde(rename = "Self", default)]
+    self_node: Option<SelfNode>,
+    #[serde(default)]
+    current_tailnet: Option<CurrentTailnet>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    user: HashMap<String, UserProfile>,
+}
+
+/// Go encodes empty slices and maps as `null`.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct SelfNode {
+    #[serde(rename = "DNSName", default)]
+    dns_name: String,
+    #[serde(rename = "UserID", default)]
+    user_id: i64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct CurrentTailnet {
+    #[serde(default)]
+    name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct UserProfile {
+    #[serde(default)]
+    login_name: String,
+}
+
+impl Status {
+    fn into_state(self) -> TailnetState {
+        match self.backend_state.as_str() {
+            "Running" => {
+                let account = self
+                    .self_node
+                    .as_ref()
+                    .and_then(|node| self.user.get(&node.user_id.to_string()))
+                    .map(|user| user.login_name.clone())
+                    .filter(|name| !name.is_empty());
+                TailnetState::Running(TailnetIdentity {
+                    account,
+                    tailnet: self
+                        .current_tailnet
+                        .map(|tailnet| tailnet.name)
+                        .filter(|name| !name.is_empty()),
+                    dns_name: self
+                        .self_node
+                        .map(|node| node.dns_name.trim_end_matches('.').to_string())
+                        .filter(|name| !name.is_empty()),
+                    addresses: self.tailscale_ips,
+                })
+            }
+            "NeedsLogin" => TailnetState::NeedsLogin,
+            "NeedsMachineAuth" => TailnetState::NeedsApproval,
+            _ => TailnetState::Starting,
+        }
+    }
+}
+
+/// The node's state, without starting it.
+pub(super) async fn state() -> TailnetState {
+    let Some(node) = NODE.get() else {
+        return TailnetState::NotStarted;
+    };
+    match node.local_api.status().await {
+        Ok(status) => status.into_state(),
+        Err(error) => TailnetState::Failed(format!("{error:#}")),
+    }
+}
+
+/// Starts the node if needed and waits until it is signed in.
+pub(super) async fn sign_in() -> anyhow::Result<()> {
+    node().await?.wait_until_running().await
+}
+
+/// Signs the node out of its tailnet. Existing forwarders stop working.
+pub(super) async fn sign_out() -> anyhow::Result<()> {
+    let node = node().await?;
+    node.local_api.post("logout").await
 }
 
 /// Returns a loopback port that forwards to `host:port` over the tailnet.
@@ -203,7 +300,7 @@ impl Node {
             tailscale,
             local_api: LocalApi {
                 client,
-                status_url: format!("http://{}/localapi/v0/status?peers=false", loopback.address),
+                base_url: format!("http://{}/localapi/v0", loopback.address),
                 credential: loopback.credential,
             },
         })
@@ -217,8 +314,19 @@ impl Node {
         let _login = LOGIN_LOCK.lock().await;
         let started = Instant::now();
         let mut opened_url = None::<String>;
+        let mut requested_login = false;
         loop {
             let status = self.local_api.status().await?;
+            // After a sign-out the node waits in NeedsLogin without a URL until
+            // a new interactive login is requested.
+            if status.backend_state == "NeedsLogin"
+                && status.auth_url.is_empty()
+                && !requested_login
+                && started.elapsed() > NEW_LOGIN_GRACE
+            {
+                requested_login = true;
+                self.local_api.post("login-interactive").await?;
+            }
             match status.backend_state.as_str() {
                 "Running" => return Ok(()),
                 "NeedsMachineAuth" => anyhow::bail!(
@@ -259,9 +367,22 @@ impl Node {
 }
 
 impl LocalApi {
+    async fn post(&self, endpoint: &str) -> anyhow::Result<()> {
+        self.client
+            .post(format!("{}/{endpoint}", self.base_url))
+            .header("Sec-Tailscale", "localapi")
+            .basic_auth("", Some(&self.credential))
+            .send()
+            .await
+            .with_context(|| format!("内置 Tailscale 请求 {endpoint} 失败"))?
+            .error_for_status()
+            .with_context(|| format!("内置 Tailscale 请求 {endpoint} 失败"))?;
+        Ok(())
+    }
+
     async fn status(&self) -> anyhow::Result<Status> {
         self.client
-            .get(&self.status_url)
+            .get(format!("{}/status?peers=false", self.base_url))
             .header("Sec-Tailscale", "localapi")
             .basic_auth("", Some(&self.credential))
             .send()
@@ -300,6 +421,55 @@ fn open_in_browser(url: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::{Status, TailnetIdentity, TailnetState};
+
+    #[test]
+    fn running_status_reports_the_signed_in_identity() {
+        let status: Status = serde_json::from_str(
+            r#"{
+                "BackendState": "Running",
+                "AuthURL": "",
+                "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"],
+                "Self": {"DNSName": "astesia.example.ts.net.", "UserID": 42},
+                "CurrentTailnet": {"Name": "example.com"},
+                "User": {"42": {"LoginName": "alex@example.com"}}
+            }"#,
+        )
+        .expect("status parses");
+        assert_eq!(
+            status.into_state(),
+            TailnetState::Running(TailnetIdentity {
+                account: Some("alex@example.com".into()),
+                tailnet: Some("example.com".into()),
+                dns_name: Some("astesia.example.ts.net".into()),
+                addresses: vec!["100.101.102.103".into(), "fd7a:115c:a1e0::1".into()],
+            })
+        );
+    }
+
+    #[test]
+    fn signed_out_states_map_to_login_and_approval() {
+        let parse = |json: &str| serde_json::from_str::<Status>(json).unwrap().into_state();
+        assert_eq!(
+            parse(r#"{"BackendState":"NeedsLogin"}"#),
+            TailnetState::NeedsLogin
+        );
+        // A fresh node's status: Go encodes empty values as null.
+        assert_eq!(
+            parse(
+                r#"{"BackendState":"NeedsLogin","TailscaleIPs":null,"Self":null,"CurrentTailnet":null,"User":null}"#
+            ),
+            TailnetState::NeedsLogin
+        );
+        assert_eq!(
+            parse(r#"{"BackendState":"NeedsMachineAuth"}"#),
+            TailnetState::NeedsApproval
+        );
+        assert_eq!(
+            parse(r#"{"BackendState":"Starting"}"#),
+            TailnetState::Starting
+        );
+    }
     /// Needs network access to the Tailscale control plane. Run with:
     /// `ASTESIA_DEBUG_DATA_DIR=<empty absolute dir> cargo test --features tailscale --lib -- --ignored tailnet`
     #[tokio::test(flavor = "multi_thread")]

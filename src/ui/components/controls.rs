@@ -399,12 +399,6 @@ impl IconButton {
         self.inner = self.inner.style(style);
         self
     }
-    pub fn popup_menu(
-        self,
-        build: impl Fn(ContextMenu, &mut Window, &mut Context<ContextMenu>) -> ContextMenu + 'static,
-    ) -> impl IntoElement {
-        self.inner.popup_menu(build)
-    }
 }
 
 impl StatefulInteractiveElement for Button {}

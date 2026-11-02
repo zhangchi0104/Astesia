@@ -22,6 +22,7 @@ pub(super) enum WorkspaceCommand {
     RestartApplication,
     SetTheme(ThemePreference),
     SetLanguage(UiLanguage),
+    OpenSettings,
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +159,13 @@ impl CommandPalette {
                 category: text(language, "连接", "Connections"),
                 shortcut: None,
                 keywords: "Delete Selected Profile… 删除选中连接…",
+            },
+            CommandEntry {
+                command: WorkspaceCommand::OpenSettings,
+                title: text(language, "打开设置…", "Open Settings…"),
+                category: text(language, "应用", "Application"),
+                shortcut: Some("⌘,"),
+                keywords: "settings preferences tailscale 设置 偏好",
             },
             CommandEntry {
                 command: WorkspaceCommand::RestartApplication,

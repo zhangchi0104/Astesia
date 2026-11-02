@@ -13,6 +13,9 @@ personal tailnet while Astesia reaches databases on a work tailnet.
 3. Connect. The first time, Astesia opens the Tailscale sign-in page in the
    browser and waits up to five minutes for the sign-in to finish.
 
+To sign in ahead of time, or to see which account and tailnet the node uses,
+open **Settings → Tailscale** (the gear in the status bar, or ⌘, / Ctrl+,).
+
 If the tailnet requires device approval, approve the device named `astesia` in
 the Tailscale admin console and connect again.
 
@@ -31,8 +34,9 @@ Node state lives in the Astesia data directory:
 | MCP server | `<data dir>/com.astesia.app/tailscale-mcp` |
 
 `<data dir>` is `~/Library/Application Support` on macOS and
-`~/.local/share` on Linux. To sign out or switch accounts, quit Astesia and
-delete that directory. `tailscale.log` in the same directory holds the node's
+`~/.local/share` on Linux. To sign out or switch accounts, use **Sign Out** in
+**Settings → Tailscale**, then sign in again. Deleting the directory while
+Astesia is closed also resets the node. `tailscale.log` in the same directory holds the node's
 log for the current run.
 
 To use a self-hosted control server such as Headscale, set
