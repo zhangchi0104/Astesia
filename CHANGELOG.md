@@ -1,3 +1,9 @@
+## [2.5.3](https://github.com/zhangchi0104/Astesia/compare/v2.5.2...v2.5.3) (2026-11-02)
+
+### Bug Fixes
+
+* **settings:** left-align sidebar section labels ([79aa324](https://github.com/zhangchi0104/Astesia/commit/79aa3240debc5340187678b8da333d72ac474480))
+
 ## [2.5.2](https://github.com/zhangchi0104/Astesia/compare/v2.5.1...v2.5.2) (2026-11-02)
 
 ### Bug Fixes
