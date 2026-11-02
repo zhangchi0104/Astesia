@@ -14,7 +14,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{ConnectionConfig, DbType};
@@ -22,19 +21,55 @@ use crate::platform::application_data_directory;
 
 #[cfg(all(unix, feature = "tailscale"))]
 mod embedded;
+#[cfg(not(all(unix, feature = "tailscale")))]
+#[path = "tailnet/unavailable.rs"]
+mod embedded;
 
-static BROWSER_LOGIN: AtomicBool = AtomicBool::new(false);
-
-/// Lets the embedded node open the Tailscale sign-in page in the browser.
-///
-/// The desktop app enables this. Headless processes such as the MCP server
-/// leave it off and report the sign-in URL in the connection error instead.
-pub(crate) fn enable_browser_login() {
-    BROWSER_LOGIN.store(true, Ordering::Release);
+/// Which process owns the node. Two processes must not share one tsnet state
+/// directory, so the desktop app and the MCP server each run their own node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NodeRole {
+    /// The desktop app: may open the sign-in page in the browser.
+    Desktop,
+    /// Headless processes such as the MCP server: report the sign-in URL in
+    /// the connection error instead.
+    Headless,
 }
 
-fn browser_login_enabled() -> bool {
-    BROWSER_LOGIN.load(Ordering::Acquire)
+impl NodeRole {
+    fn current() -> Self {
+        if DESKTOP_NODE.load(Ordering::Acquire) {
+            Self::Desktop
+        } else {
+            Self::Headless
+        }
+    }
+
+    const fn state_directory_name(self) -> &'static str {
+        match self {
+            Self::Desktop => "tailscale",
+            Self::Headless => "tailscale-mcp",
+        }
+    }
+
+    const fn hostname_suffix(self) -> &'static str {
+        match self {
+            Self::Desktop => "astesia",
+            Self::Headless => "astesia-mcp",
+        }
+    }
+
+    const fn opens_browser(self) -> bool {
+        matches!(self, Self::Desktop)
+    }
+}
+
+static DESKTOP_NODE: AtomicBool = AtomicBool::new(false);
+
+/// Makes this process the desktop app's node owner. Call it before any other
+/// function in this module.
+pub(crate) fn use_desktop_node() {
+    DESKTOP_NODE.store(true, Ordering::Release);
 }
 
 /// Whether this build contains the embedded Tailscale node.
@@ -82,17 +117,10 @@ impl TailnetSettings {
     }
 }
 
-/// The desktop app and the MCP server each keep their own node: two processes
-/// must not share one tsnet state directory.
 fn state_directory() -> anyhow::Result<PathBuf> {
     let base =
         application_data_directory().ok_or_else(|| anyhow::anyhow!("无法确定 Astesia 数据目录"))?;
-    let name = if browser_login_enabled() {
-        "tailscale"
-    } else {
-        "tailscale-mcp"
-    };
-    Ok(base.join(name))
+    Ok(base.join(NodeRole::current().state_directory_name()))
 }
 
 fn settings_path() -> anyhow::Result<PathBuf> {
@@ -110,24 +138,16 @@ pub(crate) fn settings() -> TailnetSettings {
 
 fn save_settings(settings: &TailnetSettings) -> anyhow::Result<()> {
     let path = settings_path()?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("无法创建 Tailscale 状态目录 {}", parent.display()))?;
-    }
-    let bytes = serde_json::to_vec_pretty(settings)?;
-    std::fs::write(&path, bytes)
-        .with_context(|| format!("无法保存 Tailscale 设置 {}", path.display()))
+    crate::platform::write_json_atomically(&path, settings)
+        .map_err(|error| anyhow::anyhow!("无法保存 Tailscale 设置 {}：{error}", path.display()))
 }
 
 /// The machine name used when none is set: this computer's name plus
 /// `astesia`, so each computer running Astesia is its own tailnet device.
 pub(crate) fn default_hostname() -> String {
-    let suffix = if browser_login_enabled() {
-        "astesia"
-    } else {
-        "astesia-mcp"
-    };
-    match system_hostname().as_deref().and_then(normalize_hostname) {
+    let suffix = NodeRole::current().hostname_suffix();
+    let host = gethostname::gethostname();
+    match host.to_str().and_then(normalize_hostname) {
         Some(host) => format!("{host}-{suffix}"),
         None => suffix.to_string(),
     }
@@ -151,35 +171,14 @@ pub(crate) fn normalize_hostname(input: &str) -> Option<String> {
     (!label.is_empty()).then_some(label)
 }
 
-#[cfg(all(unix, feature = "tailscale"))]
-fn system_hostname() -> Option<String> {
-    let mut buffer = [0u8; 256];
-    // SAFETY: the buffer is valid for its whole length and gethostname
-    // writes at most that many bytes.
-    let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
-    if result != 0 {
-        return None;
-    }
-    let end = buffer
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(buffer.len());
-    String::from_utf8(buffer[..end].to_vec()).ok()
-}
-
-#[cfg(not(all(unix, feature = "tailscale")))]
-fn system_hostname() -> Option<String> {
-    None
-}
-
 /// Saves the machine name and, when the node is running, renames the device.
 /// Returns the name now in use.
 pub(crate) async fn set_hostname(input: &str) -> anyhow::Result<String> {
+    let default = default_hostname();
     let mut current = settings();
-    current.hostname = normalize_hostname(input).filter(|name| *name != default_hostname());
+    current.hostname = normalize_hostname(input).filter(|name| *name != default);
     save_settings(&current)?;
-    let hostname = current.effective_hostname();
-    #[cfg(all(unix, feature = "tailscale"))]
+    let hostname = current.hostname.unwrap_or(default);
     embedded::apply_hostname(&hostname).await?;
     Ok(hostname)
 }
@@ -198,51 +197,23 @@ pub(crate) async fn set_connect_on_launch(enabled: bool) -> anyhow::Result<()> {
 /// Starts the node without waiting for sign-in. It only comes online once
 /// it has been signed in.
 pub(crate) async fn start() -> anyhow::Result<()> {
-    #[cfg(all(unix, feature = "tailscale"))]
-    {
-        embedded::start().await
-    }
-    #[cfg(not(all(unix, feature = "tailscale")))]
-    {
-        anyhow::bail!("当前版本不包含内置 Tailscale")
-    }
+    embedded::start().await
 }
 
 /// Reads the embedded node's state without starting it.
 pub(crate) async fn state() -> TailnetState {
-    #[cfg(all(unix, feature = "tailscale"))]
-    {
-        embedded::state().await
-    }
-    #[cfg(not(all(unix, feature = "tailscale")))]
-    {
-        TailnetState::Unavailable
-    }
+    embedded::state().await
 }
 
 /// Starts the embedded node and waits for it to be signed in, opening the
 /// sign-in page when needed.
 pub(crate) async fn sign_in() -> anyhow::Result<()> {
-    #[cfg(all(unix, feature = "tailscale"))]
-    {
-        embedded::sign_in().await
-    }
-    #[cfg(not(all(unix, feature = "tailscale")))]
-    {
-        anyhow::bail!("当前版本不包含内置 Tailscale")
-    }
+    embedded::sign_in().await
 }
 
 /// Signs the embedded node out of its tailnet.
 pub(crate) async fn sign_out() -> anyhow::Result<()> {
-    #[cfg(all(unix, feature = "tailscale"))]
-    {
-        embedded::sign_out().await
-    }
-    #[cfg(not(all(unix, feature = "tailscale")))]
-    {
-        anyhow::bail!("当前版本不包含内置 Tailscale")
-    }
+    embedded::sign_out().await
 }
 
 /// Returns the configuration a driver should use to reach `config`.
@@ -257,16 +228,13 @@ pub(crate) async fn route(config: ConnectionConfig) -> anyhow::Result<Connection
     route_through_tailnet(config).await
 }
 
-#[cfg(all(unix, feature = "tailscale"))]
 async fn route_through_tailnet(config: ConnectionConfig) -> anyhow::Result<ConnectionConfig> {
+    if !is_available() {
+        anyhow::bail!("当前版本不包含内置 Tailscale（仅 macOS 与 Linux 版本支持），请关闭该连接的“通过内置 Tailscale 连接”")
+    }
     let target = TailnetTarget::from_config(&config)?;
     let port = embedded::forward(&target.host, target.port).await?;
     Ok(target.rewrite(config, port))
-}
-
-#[cfg(not(all(unix, feature = "tailscale")))]
-async fn route_through_tailnet(_config: ConnectionConfig) -> anyhow::Result<ConnectionConfig> {
-    anyhow::bail!("当前版本不包含内置 Tailscale（仅 macOS 与 Linux 版本支持），请关闭该连接的“通过内置 Tailscale 连接”")
 }
 
 /// The host and port a connection reaches on the tailnet.

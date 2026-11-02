@@ -86,35 +86,34 @@ impl NativePreferencesStore {
     }
 
     pub(crate) fn save(&self, preferences: &DesktopPreferences) -> Result<(), String> {
-        let parent = self
-            .path
-            .parent()
-            .ok_or_else(|| "偏好设置路径缺少父目录".to_string())?;
-        fs::create_dir_all(parent).map_err(|error| format!("创建偏好设置目录失败：{error}"))?;
-
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)
-            .map_err(|error| format!("创建临时偏好设置失败：{error}"))?;
-        serde_json::to_writer_pretty(&mut temporary, preferences)
-            .map_err(|error| format!("序列化偏好设置失败：{error}"))?;
-        temporary
-            .write_all(b"\n")
-            .map_err(|error| format!("写入偏好设置失败：{error}"))?;
-        temporary
-            .as_file()
-            .sync_all()
-            .map_err(|error| format!("同步偏好设置失败：{error}"))?;
-        temporary
-            .persist(&self.path)
-            .map_err(|error| format!("替换偏好设置失败：{}", error.error))?;
-        sync_parent(parent)?;
-        Ok(())
+        write_json_atomically(&self.path, preferences)
+            .map_err(|error| format!("保存偏好设置失败：{error}"))
     }
 }
 
-fn sync_parent(parent: &Path) -> Result<(), String> {
+/// Writes `value` as pretty JSON to `path` through a synced temporary file, so
+/// a crash leaves either the old file or the new one, never a partial write.
+pub(crate) fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let parent = path.parent().ok_or_else(|| "路径缺少父目录".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
+
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("创建临时文件失败：{error}"))?;
+    serde_json::to_writer_pretty(&mut temporary, value)
+        .map_err(|error| format!("序列化失败：{error}"))?;
+    temporary
+        .write_all(b"\n")
+        .map_err(|error| format!("写入失败：{error}"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| format!("同步文件失败：{error}"))?;
+    temporary
+        .persist(path)
+        .map_err(|error| format!("替换文件失败：{}", error.error))?;
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("同步偏好设置目录失败：{error}"))
+        .map_err(|error| format!("同步目录失败：{error}"))
 }
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ use crate::platform::{
 const APP_IDENTIFIER: &str = "com.astesia.app";
 const INITIAL_QUERY: &str = "SELECT 1;\n";
 pub fn run() {
-    crate::tailnet::enable_browser_login();
+    crate::tailnet::use_desktop_node();
     let (preferences, preferences_store, preferences_warning) = load_preferences();
 
     gpui_kit::application()
@@ -92,10 +92,13 @@ fn initialize_editor_runtime(theme: crate::platform::ThemePreference, cx: &mut A
 
 /// Brings the built-in Tailscale device online when the user asked for it.
 fn connect_tailnet_on_launch(cx: &App) {
-    if !crate::tailnet::is_available() || !crate::tailnet::settings().connect_on_launch {
+    if !crate::tailnet::is_available() {
         return;
     }
     drop(runtime::spawn(cx, async {
+        if !crate::tailnet::settings().connect_on_launch {
+            return;
+        }
         if let Err(error) = crate::tailnet::start().await {
             log::warn!("Could not start built-in Tailscale: {error:#}");
         }

@@ -23,8 +23,6 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a connection waits for an already signed-in node to come up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(500);
-/// How long a node that needs sign-in may go without a sign-in URL before one is requested.
-const NEW_LOGIN_GRACE: Duration = Duration::from_secs(3);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// The node lives for the rest of the process: libtailscale 0.2.2 crashes when
 /// a server is closed, and every forwarder borrows it.
@@ -99,29 +97,19 @@ impl Status {
     fn into_state(self) -> TailnetState {
         match self.backend_state.as_str() {
             "Running" => {
-                let account = self
-                    .self_node
-                    .as_ref()
-                    .and_then(|node| self.user.get(&node.user_id.to_string()))
-                    .map(|user| user.login_name.clone())
-                    .filter(|name| !name.is_empty());
-                let tags = self
-                    .self_node
-                    .as_ref()
-                    .map(|node| node.tags.clone())
-                    .unwrap_or_default();
+                let node = self.self_node.unwrap_or_default();
+                let non_empty = |text: String| (!text.is_empty()).then_some(text);
                 TailnetState::Running(TailnetIdentity {
-                    account,
+                    account: self
+                        .user
+                        .get(&node.user_id.to_string())
+                        .and_then(|user| non_empty(user.login_name.clone())),
                     tailnet: self
                         .current_tailnet
-                        .map(|tailnet| tailnet.name)
-                        .filter(|name| !name.is_empty()),
-                    dns_name: self
-                        .self_node
-                        .map(|node| node.dns_name.trim_end_matches('.').to_string())
-                        .filter(|name| !name.is_empty()),
+                        .and_then(|tailnet| non_empty(tailnet.name)),
+                    dns_name: non_empty(node.dns_name.trim_end_matches('.').to_string()),
                     addresses: self.tailscale_ips,
-                    tags,
+                    tags: node.tags,
                 })
             }
             "NeedsLogin" => TailnetState::NeedsLogin,
@@ -166,7 +154,10 @@ pub(super) async fn sign_in() -> anyhow::Result<()> {
 /// Signs the node out of its tailnet. Existing forwarders stop working.
 pub(super) async fn sign_out() -> anyhow::Result<()> {
     let node = node().await?;
-    node.local_api.post("logout").await
+    node.local_api.post("logout").await?;
+    // A signed-out node waits without a sign-in URL until a new interactive
+    // login is requested; ask now so the next sign-in has one.
+    node.local_api.post("login-interactive").await
 }
 
 /// Returns a loopback port that forwards to `host:port` over the tailnet.
@@ -335,19 +326,8 @@ impl Node {
         let _login = LOGIN_LOCK.lock().await;
         let started = Instant::now();
         let mut opened_url = None::<String>;
-        let mut requested_login = false;
         loop {
             let status = self.local_api.status().await?;
-            // After a sign-out the node waits in NeedsLogin without a URL until
-            // a new interactive login is requested.
-            if status.backend_state == "NeedsLogin"
-                && status.auth_url.is_empty()
-                && !requested_login
-                && started.elapsed() > NEW_LOGIN_GRACE
-            {
-                requested_login = true;
-                self.local_api.post("login-interactive").await?;
-            }
             match status.backend_state.as_str() {
                 "Running" => return Ok(()),
                 "NeedsMachineAuth" => anyhow::bail!(
@@ -355,7 +335,7 @@ impl Node {
                     super::settings().effective_hostname()
                 ),
                 "NeedsLogin" if !status.auth_url.is_empty() => {
-                    if !super::browser_login_enabled() {
+                    if !super::NodeRole::current().opens_browser() {
                         anyhow::bail!(
                             "内置 Tailscale 尚未登录，请在浏览器打开以下地址登录后重试：{}",
                             status.auth_url
@@ -389,43 +369,42 @@ impl Node {
 }
 
 impl LocalApi {
-    async fn post(&self, endpoint: &str) -> anyhow::Result<()> {
-        self.client
-            .post(format!("{}/{endpoint}", self.base_url))
+    /// Sends one LocalAPI request and fails on an error status.
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        body: Option<serde_json::Value>,
+    ) -> anyhow::Result<reqwest::Response> {
+        let mut request = self
+            .client
+            .request(method, format!("{}/{endpoint}", self.base_url))
             .header("Sec-Tailscale", "localapi")
-            .basic_auth("", Some(&self.credential))
+            .basic_auth("", Some(&self.credential));
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        request
             .send()
             .await
-            .with_context(|| format!("内置 Tailscale 请求 {endpoint} 失败"))?
-            .error_for_status()
-            .with_context(|| format!("内置 Tailscale 请求 {endpoint} 失败"))?;
+            .and_then(reqwest::Response::error_for_status)
+            .with_context(|| format!("内置 Tailscale 请求 {endpoint} 失败"))
+    }
+
+    async fn post(&self, endpoint: &str) -> anyhow::Result<()> {
+        self.send(reqwest::Method::POST, endpoint, None).await?;
         Ok(())
     }
 
     async fn patch_prefs(&self, prefs: serde_json::Value) -> anyhow::Result<()> {
-        self.client
-            .patch(format!("{}/prefs", self.base_url))
-            .header("Sec-Tailscale", "localapi")
-            .basic_auth("", Some(&self.credential))
-            .json(&prefs)
-            .send()
-            .await
-            .context("内置 Tailscale 修改设备设置失败")?
-            .error_for_status()
-            .context("内置 Tailscale 修改设备设置失败")?;
+        self.send(reqwest::Method::PATCH, "prefs", Some(prefs))
+            .await?;
         Ok(())
     }
 
     async fn status(&self) -> anyhow::Result<Status> {
-        self.client
-            .get(format!("{}/status?peers=false", self.base_url))
-            .header("Sec-Tailscale", "localapi")
-            .basic_auth("", Some(&self.credential))
-            .send()
-            .await
-            .context("无法读取内置 Tailscale 状态")?
-            .error_for_status()
-            .context("无法读取内置 Tailscale 状态")?
+        self.send(reqwest::Method::GET, "status?peers=false", None)
+            .await?
             .json::<Status>()
             .await
             .context("内置 Tailscale 返回了无法识别的状态")

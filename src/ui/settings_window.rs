@@ -92,7 +92,8 @@ struct SettingsWindow {
     hostname: String,
     hostname_input: Entity<InputField>,
     connect_on_launch: bool,
-    _tailscale_refresh: Task<()>,
+    /// Polls the node's state while the Tailscale section is shown.
+    tailscale_poll: Option<Task<()>>,
     _workspace_release: Subscription,
     _hostname_events: Subscription,
 }
@@ -104,17 +105,6 @@ impl SettingsWindow {
             cx.observe_release_in(settings, window, |_, _, window, _| window.remove_window());
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let tailscale_refresh = cx.spawn(async move |this, cx| loop {
-            let refreshed = this
-                .update(cx, |this, cx| this.refresh_tailscale(cx))
-                .is_ok();
-            if !refreshed {
-                break;
-            }
-            cx.background_executor()
-                .timer(TAILSCALE_REFRESH_INTERVAL)
-                .await;
-        });
         let tailnet_settings = crate::tailnet::settings();
         let hostname = tailnet_settings.effective_hostname();
         let default_hostname = crate::tailnet::default_hostname();
@@ -140,7 +130,7 @@ impl SettingsWindow {
             hostname,
             hostname_input,
             connect_on_launch: tailnet_settings.connect_on_launch,
-            _tailscale_refresh: tailscale_refresh,
+            tailscale_poll: None,
             _workspace_release: workspace_release,
             _hostname_events: hostname_events,
         }
@@ -167,6 +157,7 @@ impl SettingsWindow {
     fn select_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if self.section != section {
             self.section = section;
+            self.refresh_tailscale(cx);
             cx.notify();
         }
     }
@@ -190,21 +181,35 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// Reads the node's state now and then every few seconds, while the
+    /// Tailscale section is shown. Restarting drops the previous poll, so at
+    /// most one status request is in flight.
     fn refresh_tailscale(&mut self, cx: &mut Context<Self>) {
-        let load = super::runtime::spawn(cx, crate::tailnet::state());
-        cx.spawn(async move |this, cx| {
-            let state = load
-                .await
-                .unwrap_or_else(|error| TailnetState::Failed(error.to_string()));
-            this.update(cx, |this, cx| {
+        if self.section != SettingsSection::Tailscale {
+            self.tailscale_poll = None;
+            return;
+        }
+        self.tailscale_poll = Some(cx.spawn(async move |this, cx| loop {
+            let Ok(load) = this.update(cx, |_, cx| {
+                super::runtime::spawn_result(cx, async { Ok(crate::tailnet::state().await) })
+            }) else {
+                break;
+            };
+            let state = load.await.unwrap_or_else(TailnetState::Failed);
+            let unavailable = state == TailnetState::Unavailable;
+            let updated = this.update(cx, |this, cx| {
                 if this.tailscale_state.as_ref() != Some(&state) {
                     this.tailscale_state = Some(state);
                     cx.notify();
                 }
-            })
-            .ok();
-        })
-        .detach();
+            });
+            if updated.is_err() || unavailable {
+                break;
+            }
+            cx.background_executor()
+                .timer(TAILSCALE_REFRESH_INTERVAL)
+                .await;
+        }));
     }
 
     fn run_tailscale_action(&mut self, action: TailscaleAction, cx: &mut Context<Self>) {
@@ -214,17 +219,14 @@ impl SettingsWindow {
         self.tailscale_action = Some(action);
         self.tailscale_error = None;
         cx.notify();
-        let run = super::runtime::spawn(cx, async move {
+        let run = super::runtime::spawn_result(cx, async move {
             match action {
                 TailscaleAction::SigningIn => crate::tailnet::sign_in().await,
                 TailscaleAction::SigningOut => crate::tailnet::sign_out().await,
             }
         });
         cx.spawn(async move |this, cx| {
-            let result = match run.await {
-                Ok(result) => result.map_err(|error| format!("{error:#}")),
-                Err(error) => Err(error.to_string()),
-            };
+            let result = run.await;
             this.update(cx, |this, cx| {
                 this.tailscale_action = None;
                 this.tailscale_error = result.err();
@@ -241,16 +243,14 @@ impl SettingsWindow {
         if input.trim() == self.hostname {
             return;
         }
-        let save = super::runtime::spawn(
-            cx,
-            async move { crate::tailnet::set_hostname(&input).await },
-        );
+        let save =
+            super::runtime::spawn_result(
+                cx,
+                async move { crate::tailnet::set_hostname(&input).await },
+            );
         let window_handle = window.window_handle();
         cx.spawn(async move |this, cx| {
-            let result = match save.await {
-                Ok(result) => result.map_err(|error| format!("{error:#}")),
-                Err(error) => Err(error.to_string()),
-            };
+            let result = save.await;
             cx.update_window(window_handle, |_, window, cx| {
                 this.update(cx, |this, cx| {
                     match result {
@@ -276,12 +276,9 @@ impl SettingsWindow {
     fn set_connect_on_launch(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.connect_on_launch = enabled;
         cx.notify();
-        let save = super::runtime::spawn(cx, crate::tailnet::set_connect_on_launch(enabled));
+        let save = super::runtime::spawn_result(cx, crate::tailnet::set_connect_on_launch(enabled));
         cx.spawn(async move |this, cx| {
-            let result = match save.await {
-                Ok(result) => result.map_err(|error| format!("{error:#}")),
-                Err(error) => Err(error.to_string()),
-            };
+            let result = save.await;
             this.update(cx, |this, cx| {
                 if let Err(error) = result {
                     this.tailscale_error = Some(error);
@@ -329,12 +326,11 @@ impl SettingsWindow {
     }
 
     fn render_general(&self, language: UiLanguage, cx: &mut Context<Self>) -> AnyElement {
-        let current_language = language;
         let current_theme = self.theme(cx);
         let language_button = |id: &'static str, label: &'static str, value: UiLanguage| {
             Button::new(id, label)
                 .size(ButtonSize::Compact)
-                .toggle_state(current_language == value)
+                .toggle_state(language == value)
                 .selected_style(ButtonStyle::Filled)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.set_language(value, window, cx);
@@ -370,18 +366,21 @@ impl SettingsWindow {
         v_flex()
             .gap_4()
             .child(section_title(text(language, "通用", "General")))
-            .child(setting_row(
-                text(language, "语言", "Language"),
-                None,
-                language_buttons,
-                cx,
-            ))
-            .child(setting_row(
-                text(language, "主题", "Theme"),
-                None,
-                theme_buttons,
-                cx,
-            ))
+            .child(
+                card(cx)
+                    .child(card_row(
+                        text(language, "语言", "Language"),
+                        None,
+                        language_buttons,
+                        cx,
+                    ))
+                    .child(card_row(
+                        text(language, "主题", "Theme"),
+                        None,
+                        theme_buttons,
+                        cx,
+                    )),
+            )
             .when_some(self.preference_error.clone(), |section, error| {
                 section.child(notice(NoticeTone::Warning, error, cx))
             })
@@ -391,8 +390,8 @@ impl SettingsWindow {
     fn render_tailscale(&self, language: UiLanguage, cx: &mut Context<Self>) -> AnyElement {
         let mut section = v_flex().gap_4().child(section_title("Tailscale"));
 
-        let state = self.tailscale_state.clone();
-        if state == Some(TailnetState::Unavailable) {
+        let state = self.tailscale_state.as_ref();
+        if state == Some(&TailnetState::Unavailable) {
             return section
                 .child(notice(
                     NoticeTone::Info,
@@ -407,11 +406,11 @@ impl SettingsWindow {
                 .into_any_element();
         }
 
-        let identity = match &state {
-            Some(TailnetState::Running(identity)) => Some(identity.clone()),
+        let identity = match state {
+            Some(TailnetState::Running(identity)) => Some(identity),
             _ => None,
         };
-        let mut card = card(cx).child(self.render_account_row(language, state.as_ref(), cx));
+        let mut card = card(cx).child(self.render_account_row(language, state, cx));
 
         let weak = cx.entity().downgrade();
         card = card.child(card_row(
@@ -438,7 +437,7 @@ impl SettingsWindow {
             cx,
         ));
 
-        if let Some(identity) = &identity {
+        if let Some(identity) = identity {
             if let Some(tailnet) = identity.tailnet.clone() {
                 card = card.child(card_row("Tailnet", None, value_label(tailnet, cx), cx));
             }
@@ -461,7 +460,6 @@ impl SettingsWindow {
         }
 
         let tags = identity
-            .as_ref()
             .filter(|identity| !identity.tags.is_empty())
             .map(|identity| identity.tags.join(", "))
             .unwrap_or_else(|| text(language, "无", "None").to_string());
@@ -510,7 +508,7 @@ impl SettingsWindow {
                 cx,
             ));
         }
-        let status_error = match &state {
+        let status_error = match state {
             Some(TailnetState::Failed(error)) => Some(error.clone()),
             _ => None,
         };
@@ -538,32 +536,25 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let (title, subtitle) = account_summary(language, state, &self.hostname);
         let signed_in = matches!(state, Some(TailnetState::Running(_)));
-        let busy = self.tailscale_action.is_some();
-        let button = if signed_in {
-            Button::new(
+        let (id, label, action) = if signed_in {
+            (
                 "settings-tailscale-sign-out",
                 text(language, "退出登录…", "Sign Out…"),
+                TailscaleAction::SigningOut,
             )
-            .size(ButtonSize::Compact)
-            .style(ButtonStyle::Filled)
-            .loading(self.tailscale_action == Some(TailscaleAction::SigningOut))
-            .disabled(busy)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.run_tailscale_action(TailscaleAction::SigningOut, cx);
-            }))
         } else {
-            Button::new(
+            (
                 "settings-tailscale-sign-in",
                 text(language, "登录…", "Sign In…"),
+                TailscaleAction::SigningIn,
             )
+        };
+        let button = Button::new(id, label)
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Filled)
-            .loading(self.tailscale_action == Some(TailscaleAction::SigningIn))
-            .disabled(busy || state.is_none())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.run_tailscale_action(TailscaleAction::SigningIn, cx);
-            }))
-        };
+            .loading(self.tailscale_action == Some(action))
+            .disabled(self.tailscale_action.is_some() || state.is_none())
+            .on_click(cx.listener(move |this, _, _, cx| this.run_tailscale_action(action, cx)));
         let colors = cx.theme().colors();
         h_flex()
             .w_full()
@@ -773,38 +764,6 @@ fn section_title(title: &'static str) -> impl IntoElement {
         .text_lg()
         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .child(title)
-}
-
-fn setting_row(
-    label: &'static str,
-    detail: Option<&'static str>,
-    control: impl IntoElement,
-    cx: &mut Context<SettingsWindow>,
-) -> impl IntoElement {
-    let colors = cx.theme().colors();
-    h_flex()
-        .w_full()
-        .items_start()
-        .justify_between()
-        .gap_4()
-        .pb_3()
-        .border_b_1()
-        .border_color(colors.border)
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap_0p5()
-                .child(Label::new(label).size(LabelSize::Small))
-                .when_some(detail, |column, detail| {
-                    column.child(
-                        Label::new(detail)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                }),
-        )
-        .child(h_flex().flex_none().justify_end().child(control))
 }
 
 #[derive(Clone, Copy)]
