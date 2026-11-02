@@ -116,6 +116,7 @@ impl Render for AstesiaWorkspace {
             .on_action(cx.listener(Self::previous_tab_action))
             .on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::refresh_connections_action))
+            .on_action(cx.listener(Self::open_settings_action))
             .relative()
             .size_full()
             .overflow_hidden()
@@ -194,7 +195,7 @@ impl Render for AstesiaWorkspace {
                             })
                             .on_click(cx.listener(Self::open_palette_click)),
                     )
-                    .child(self.settings_menu(cx))
+                    .child(self.settings_button(cx))
                     .child(
                         Label::new(format!("Astesia v{}", env!("CARGO_PKG_VERSION")))
                             .size(LabelSize::XSmall)

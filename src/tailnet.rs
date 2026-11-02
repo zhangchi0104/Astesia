@@ -11,30 +11,209 @@
 // Builds without the embedded node keep the target parsing for its tests.
 #![cfg_attr(not(all(unix, feature = "tailscale")), allow(dead_code))]
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde::{Deserialize, Serialize};
+
 use crate::db::{ConnectionConfig, DbType};
+use crate::platform::application_data_directory;
 
 #[cfg(all(unix, feature = "tailscale"))]
 mod embedded;
+#[cfg(not(all(unix, feature = "tailscale")))]
+#[path = "tailnet/unavailable.rs"]
+mod embedded;
 
-static BROWSER_LOGIN: AtomicBool = AtomicBool::new(false);
-
-/// Lets the embedded node open the Tailscale sign-in page in the browser.
-///
-/// The desktop app enables this. Headless processes such as the MCP server
-/// leave it off and report the sign-in URL in the connection error instead.
-pub(crate) fn enable_browser_login() {
-    BROWSER_LOGIN.store(true, Ordering::Release);
+/// Which process owns the node. Two processes must not share one tsnet state
+/// directory, so the desktop app and the MCP server each run their own node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NodeRole {
+    /// The desktop app: may open the sign-in page in the browser.
+    Desktop,
+    /// Headless processes such as the MCP server: report the sign-in URL in
+    /// the connection error instead.
+    Headless,
 }
 
-fn browser_login_enabled() -> bool {
-    BROWSER_LOGIN.load(Ordering::Acquire)
+impl NodeRole {
+    fn current() -> Self {
+        if DESKTOP_NODE.load(Ordering::Acquire) {
+            Self::Desktop
+        } else {
+            Self::Headless
+        }
+    }
+
+    const fn state_directory_name(self) -> &'static str {
+        match self {
+            Self::Desktop => "tailscale",
+            Self::Headless => "tailscale-mcp",
+        }
+    }
+
+    const fn hostname_suffix(self) -> &'static str {
+        match self {
+            Self::Desktop => "astesia",
+            Self::Headless => "astesia-mcp",
+        }
+    }
+
+    const fn opens_browser(self) -> bool {
+        matches!(self, Self::Desktop)
+    }
+}
+
+static DESKTOP_NODE: AtomicBool = AtomicBool::new(false);
+
+/// Makes this process the desktop app's node owner. Call it before any other
+/// function in this module.
+pub(crate) fn use_desktop_node() {
+    DESKTOP_NODE.store(true, Ordering::Release);
 }
 
 /// Whether this build contains the embedded Tailscale node.
 pub(crate) const fn is_available() -> bool {
     cfg!(all(unix, feature = "tailscale"))
+}
+
+/// What the embedded node is doing, for the settings window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TailnetState {
+    /// This build does not include the embedded node.
+    Unavailable,
+    /// The node starts on the first Tailscale connection or sign-in.
+    NotStarted,
+    Starting,
+    NeedsLogin,
+    /// A tailnet admin has to approve the device.
+    NeedsApproval,
+    Running(TailnetIdentity),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TailnetIdentity {
+    pub(crate) account: Option<String>,
+    pub(crate) tailnet: Option<String>,
+    pub(crate) dns_name: Option<String>,
+    pub(crate) addresses: Vec<String>,
+    pub(crate) tags: Vec<String>,
+}
+
+/// Device settings for the desktop app's node, kept in its state directory.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub(crate) struct TailnetSettings {
+    /// The machine name on the tailnet. `None` uses [`default_hostname`].
+    pub(crate) hostname: Option<String>,
+    /// Starts the node when Astesia opens, so the device stays online.
+    pub(crate) connect_on_launch: bool,
+}
+
+impl TailnetSettings {
+    pub(crate) fn effective_hostname(&self) -> String {
+        self.hostname.clone().unwrap_or_else(default_hostname)
+    }
+}
+
+fn state_directory() -> anyhow::Result<PathBuf> {
+    let base =
+        application_data_directory().ok_or_else(|| anyhow::anyhow!("无法确定 Astesia 数据目录"))?;
+    Ok(base.join(NodeRole::current().state_directory_name()))
+}
+
+fn settings_path() -> anyhow::Result<PathBuf> {
+    Ok(state_directory()?.join("astesia-settings.json"))
+}
+
+/// Reads the node's device settings. A missing or unreadable file gives the defaults.
+pub(crate) fn settings() -> TailnetSettings {
+    settings_path()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn save_settings(settings: &TailnetSettings) -> anyhow::Result<()> {
+    let path = settings_path()?;
+    crate::platform::write_json_atomically(&path, settings)
+        .map_err(|error| anyhow::anyhow!("无法保存 Tailscale 设置 {}：{error}", path.display()))
+}
+
+/// The machine name used when none is set: this computer's name plus
+/// `astesia`, so each computer running Astesia is its own tailnet device.
+pub(crate) fn default_hostname() -> String {
+    let suffix = NodeRole::current().hostname_suffix();
+    let host = gethostname::gethostname();
+    match host.to_str().and_then(normalize_hostname) {
+        Some(host) => format!("{host}-{suffix}"),
+        None => suffix.to_string(),
+    }
+}
+
+/// Turns user input into a DNS label: lowercase letters, digits and dashes,
+/// at most 63 characters. Returns `None` when nothing usable is left.
+pub(crate) fn normalize_hostname(input: &str) -> Option<String> {
+    let first_label = input.trim().split('.').next().unwrap_or_default();
+    let mut label = String::new();
+    for character in first_label.chars() {
+        let character = character.to_ascii_lowercase();
+        if character.is_ascii_alphanumeric() {
+            label.push(character);
+        } else if !label.ends_with('-') {
+            label.push('-');
+        }
+    }
+    let label: String = label.trim_matches('-').chars().take(63).collect();
+    let label = label.trim_end_matches('-').to_string();
+    (!label.is_empty()).then_some(label)
+}
+
+/// Saves the machine name and, when the node is running, renames the device.
+/// Returns the name now in use.
+pub(crate) async fn set_hostname(input: &str) -> anyhow::Result<String> {
+    let default = default_hostname();
+    let mut current = settings();
+    current.hostname = normalize_hostname(input).filter(|name| *name != default);
+    save_settings(&current)?;
+    let hostname = current.hostname.unwrap_or(default);
+    embedded::apply_hostname(&hostname).await?;
+    Ok(hostname)
+}
+
+/// Saves whether the node starts with Astesia, and starts it when turned on.
+pub(crate) async fn set_connect_on_launch(enabled: bool) -> anyhow::Result<()> {
+    let mut current = settings();
+    current.connect_on_launch = enabled;
+    save_settings(&current)?;
+    if enabled {
+        start().await?;
+    }
+    Ok(())
+}
+
+/// Starts the node without waiting for sign-in. It only comes online once
+/// it has been signed in.
+pub(crate) async fn start() -> anyhow::Result<()> {
+    embedded::start().await
+}
+
+/// Reads the embedded node's state without starting it.
+pub(crate) async fn state() -> TailnetState {
+    embedded::state().await
+}
+
+/// Starts the embedded node and waits for it to be signed in, opening the
+/// sign-in page when needed.
+pub(crate) async fn sign_in() -> anyhow::Result<()> {
+    embedded::sign_in().await
+}
+
+/// Signs the embedded node out of its tailnet.
+pub(crate) async fn sign_out() -> anyhow::Result<()> {
+    embedded::sign_out().await
 }
 
 /// Returns the configuration a driver should use to reach `config`.
@@ -49,16 +228,13 @@ pub(crate) async fn route(config: ConnectionConfig) -> anyhow::Result<Connection
     route_through_tailnet(config).await
 }
 
-#[cfg(all(unix, feature = "tailscale"))]
 async fn route_through_tailnet(config: ConnectionConfig) -> anyhow::Result<ConnectionConfig> {
+    if !is_available() {
+        anyhow::bail!("当前版本不包含内置 Tailscale（仅 macOS 与 Linux 版本支持），请关闭该连接的“通过内置 Tailscale 连接”")
+    }
     let target = TailnetTarget::from_config(&config)?;
     let port = embedded::forward(&target.host, target.port).await?;
     Ok(target.rewrite(config, port))
-}
-
-#[cfg(not(all(unix, feature = "tailscale")))]
-async fn route_through_tailnet(_config: ConnectionConfig) -> anyhow::Result<ConnectionConfig> {
-    anyhow::bail!("当前版本不包含内置 Tailscale（仅 macOS 与 Linux 版本支持），请关闭该连接的“通过内置 Tailscale 连接”")
 }
 
 /// The host and port a connection reaches on the tailnet.
@@ -140,6 +316,34 @@ impl TailnetTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostnames_are_normalized_to_one_dns_label() {
+        assert_eq!(
+            normalize_hostname("Alex's MacBook Pro.local").as_deref(),
+            Some("alex-s-macbook-pro")
+        );
+        assert_eq!(
+            normalize_hostname("  db_gateway  ").as_deref(),
+            Some("db-gateway")
+        );
+        assert_eq!(normalize_hostname("---").as_deref(), None);
+        assert_eq!(normalize_hostname("").as_deref(), None);
+        assert_eq!(
+            normalize_hostname(&"a".repeat(80)).map(|name| name.len()),
+            Some(63)
+        );
+    }
+
+    #[test]
+    fn settings_tolerate_missing_fields() {
+        let settings: TailnetSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings, TailnetSettings::default());
+        let settings: TailnetSettings =
+            serde_json::from_str(r#"{"hostname":"db-box","connect_on_launch":true}"#).unwrap();
+        assert_eq!(settings.effective_hostname(), "db-box");
+        assert!(settings.connect_on_launch);
+    }
 
     fn config(db_type: DbType, host: &str, port: u16) -> ConnectionConfig {
         ConnectionConfig {

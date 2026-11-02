@@ -14,3 +14,22 @@ where
 {
     cx.global::<Runtime>().0.spawn(future)
 }
+
+/// Runs a fallible future on the runtime and returns its result, with the
+/// error (or a panic in the task) formatted for display.
+pub(super) fn spawn_result<T, F>(
+    cx: &App,
+    future: F,
+) -> impl Future<Output = Result<T, String>> + use<T, F>
+where
+    T: Send + 'static,
+    F: Future<Output = anyhow::Result<T>> + Send + 'static,
+{
+    let task = spawn(cx, future);
+    async move {
+        match task.await {
+            Ok(result) => result.map_err(|error| format!("{error:#}")),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}

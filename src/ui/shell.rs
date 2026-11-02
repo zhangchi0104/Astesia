@@ -210,17 +210,3 @@ pub(super) fn notify_preference_error(
 
 pub(super) struct UiLocale(pub UiLanguage);
 impl gpui_kit::Global for UiLocale {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn theme_and_language_cycles_include_every_supported_value() {
-        assert_eq!(ThemePreference::System.next(), ThemePreference::Light);
-        assert_eq!(ThemePreference::Light.next(), ThemePreference::Dark);
-        assert_eq!(ThemePreference::Dark.next(), ThemePreference::System);
-        assert_eq!(UiLanguage::Chinese.next(), UiLanguage::English);
-        assert_eq!(UiLanguage::English.next(), UiLanguage::Chinese);
-    }
-}

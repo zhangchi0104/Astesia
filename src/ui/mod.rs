@@ -21,6 +21,7 @@ mod performance_item;
 mod query_item;
 mod redis_item;
 mod runtime;
+mod settings_window;
 mod shell;
 mod sql_completion;
 mod sql_language;
@@ -52,7 +53,7 @@ use crate::platform::{
 const APP_IDENTIFIER: &str = "com.astesia.app";
 const INITIAL_QUERY: &str = "SELECT 1;\n";
 pub fn run() {
-    crate::tailnet::enable_browser_login();
+    crate::tailnet::use_desktop_node();
     let (preferences, preferences_store, preferences_warning) = load_preferences();
 
     gpui_kit::application()
@@ -63,6 +64,7 @@ pub fn run() {
             cx.set_global(shell::UiLocale(preferences.language));
             install_last_window_quit_policy();
             initialize_editor_runtime(preferences.theme, cx);
+            connect_tailnet_on_launch(cx);
             open_main_window(cx, preferences, preferences_store, preferences_warning);
             cx.activate(true);
         });
@@ -85,6 +87,22 @@ fn initialize_editor_runtime(theme: crate::platform::ThemePreference, cx: &mut A
     text_editor::bind_keys(cx);
     editor_search::bind_keys(cx);
     bind_workspace_keys(cx);
+    settings_window::bind_settings_window_keys(cx);
+}
+
+/// Brings the built-in Tailscale device online when the user asked for it.
+fn connect_tailnet_on_launch(cx: &App) {
+    if !crate::tailnet::is_available() {
+        return;
+    }
+    drop(runtime::spawn(cx, async {
+        if !crate::tailnet::settings().connect_on_launch {
+            return;
+        }
+        if let Err(error) = crate::tailnet::start().await {
+            log::warn!("Could not start built-in Tailscale: {error:#}");
+        }
+    }));
 }
 
 fn open_main_window(

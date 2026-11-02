@@ -21,7 +21,7 @@ use super::{
         ConnectionSessionStatus,
     },
     data_grid_item::DataGridItem,
-    localization::{text, theme_label},
+    localization::text,
     object_definition_item::{ObjectDefinition, ObjectDefinitionItem},
     object_mutation_form::{ObjectMutationForm, ObjectMutationFormMode, ObjectMutationSaved},
     query_item::{QueryContextChanged, QueryDocumentStateChanged, QueryItem},
@@ -44,7 +44,8 @@ actions!(
         NextQueryTab,
         PreviousQueryTab,
         ToggleConnectionsSidebar,
-        RefreshConnectionProfiles
+        RefreshConnectionProfiles,
+        OpenSettings
     ]
 );
 
@@ -75,6 +76,8 @@ pub(super) fn bind_workspace_keys(cx: &mut App) {
             RefreshConnectionProfiles,
             Some("AstesiaWorkspace"),
         ),
+        gpui_kit::KeyBinding::new("cmd-,", OpenSettings, Some("AstesiaWorkspace")),
+        gpui_kit::KeyBinding::new("ctrl-,", OpenSettings, Some("AstesiaWorkspace")),
         gpui_kit::KeyBinding::new("up", menu::SelectPrevious, Some("CommandPalette > Input")),
         gpui_kit::KeyBinding::new("down", menu::SelectNext, Some("CommandPalette > Input")),
         gpui_kit::KeyBinding::new("enter", menu::Confirm, Some("CommandPalette > Input")),
@@ -947,7 +950,16 @@ impl AstesiaWorkspace {
             WorkspaceCommand::RestartApplication => self.restart_application(window, cx),
             WorkspaceCommand::SetTheme(theme) => self.set_theme(theme, cx),
             WorkspaceCommand::SetLanguage(language) => self.set_language(language, cx),
+            WorkspaceCommand::OpenSettings => self.open_settings(cx),
         }
+    }
+
+    fn open_settings(&mut self, cx: &mut Context<Self>) {
+        super::settings_window::open_settings_window(&self.settings, cx);
+    }
+
+    fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(cx);
     }
 
     fn toggle_command_palette(
