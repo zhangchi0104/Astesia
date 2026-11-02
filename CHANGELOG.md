@@ -1,3 +1,14 @@
+## [2.5.0](https://github.com/zhangchi0104/Astesia/compare/v2.4.0...v2.5.0) (2026-11-02)
+
+### Features
+
+* add a settings window with Tailscale sign-in and sign-out ([dd941ad](https://github.com/zhangchi0104/Astesia/commit/dd941ad5e435b51d0cbc431355b85cb11b3a2b3c))
+* redesign Tailscale settings around Astesia's own tailnet device ([f9e8108](https://github.com/zhangchi0104/Astesia/commit/f9e8108adea1968d84a2ebd116da78fd718e6ac1))
+
+### Bug Fixes
+
+* let the x86_64 macOS package build libtailscale ([774e8ec](https://github.com/zhangchi0104/Astesia/commit/774e8ec0f09bb756f35e3484eac183d9188c3193))
+
 ## [2.4.0](https://github.com/zhangchi0104/Astesia/compare/v2.3.2...v2.4.0) (2026-11-01)
 
 ### Features
