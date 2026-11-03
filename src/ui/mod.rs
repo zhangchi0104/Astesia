@@ -13,7 +13,7 @@ mod engine_presentation;
 mod er_diagram_item;
 mod input_field;
 mod localization;
-mod mcp_service_item;
+mod mcp_service_window;
 mod modal;
 mod object_definition_item;
 mod object_mutation_form;
@@ -88,6 +88,7 @@ fn initialize_editor_runtime(theme: crate::platform::ThemePreference, cx: &mut A
     editor_search::bind_keys(cx);
     bind_workspace_keys(cx);
     settings_window::bind_settings_window_keys(cx);
+    mcp_service_window::bind_mcp_service_window_keys(cx);
 }
 
 /// Brings the built-in Tailscale device online when the user asked for it.

@@ -173,15 +173,34 @@ impl Render for AstesiaWorkspace {
                                 workspace.open_task_center(window, cx);
                             })),
                     )
-                    .child(
-                        IconButton::new("open-mcp-service", IconName::Server)
-                            .icon_size(IconSize::Small)
-                            .aria_label(text(language, "MCP 服务", "MCP Service"))
-                            .tooltip(Tooltip::text(text(language, "MCP 服务", "MCP Service")))
-                            .on_click(cx.listener(|workspace, _, window, cx| {
-                                workspace.open_mcp_service(window, cx);
-                            })),
-                    )
+                    .child({
+                        let mcp_button_bounds = self.mcp_button_bounds.clone();
+                        div()
+                            .relative()
+                            .child(
+                                IconButton::new("open-mcp-service", IconName::Server)
+                                    .icon_size(IconSize::Small)
+                                    .aria_label(text(language, "MCP 服务", "MCP Service"))
+                                    .tooltip(Tooltip::text(text(
+                                        language,
+                                        "MCP 服务",
+                                        "MCP Service",
+                                    )))
+                                    .on_click(cx.listener(|workspace, _, window, cx| {
+                                        workspace.open_mcp_service(window, cx);
+                                    })),
+                            )
+                            .child(
+                                gpui_kit::canvas(
+                                    move |bounds, _, _| mcp_button_bounds.set(bounds),
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full(),
+                            )
+                    })
                     .child(
                         IconButton::new("open-command-palette", IconName::Command)
                             .icon_size(IconSize::Small)

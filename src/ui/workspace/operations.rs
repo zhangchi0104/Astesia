@@ -11,7 +11,7 @@ use crate::ui::{
     document_item::DocumentItem,
     er_diagram_item::ErDiagramItem,
     localization::text,
-    mcp_service_item::McpServiceItem,
+    mcp_service_window::open_mcp_service_window,
     performance_item::PerformanceItem,
     redis_item::{RedisItem, RedisKeyDeleted},
     shell::NotificationTone,
@@ -158,21 +158,8 @@ impl AstesiaWorkspace {
     }
 
     pub(super) fn open_mcp_service(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_or_activate(
-            WorkspaceItemKey::McpService,
-            window,
-            cx,
-            |workspace, _, cx| {
-                let item = cx.new(|cx| {
-                    McpServiceItem::new(
-                        workspace.application.clone(),
-                        workspace.settings.clone(),
-                        cx,
-                    )
-                });
-                (WorkspaceItem::new(item), Vec::new())
-            },
-        );
+        let anchor = self.mcp_button_bounds.get();
+        open_mcp_service_window(self.application.clone(), &self.settings, anchor, window, cx);
     }
 
     pub(super) fn choose_backup_content(
