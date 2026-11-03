@@ -1,3 +1,11 @@
+## [2.6.0](https://github.com/zhangchi0104/Astesia/compare/v2.5.3...v2.6.0) (2026-11-03)
+
+### Features
+
+* **mcp:** open the MCP server window right above its status bar button ([f6a78d7](https://github.com/zhangchi0104/Astesia/commit/f6a78d78b034fbaebc86ce3377db091e89600d8b))
+* **mcp:** show the MCP server panel in a floating window ([b2e319a](https://github.com/zhangchi0104/Astesia/commit/b2e319ab8d1fe7ae9c939da839b1d04601b1d785))
+* **tailnet:** let the MCP server reuse the app's Tailscale sign-in ([a2cd97b](https://github.com/zhangchi0104/Astesia/commit/a2cd97be572b5ae8656b926605631eb5b8203a03))
+
 ## [2.5.3](https://github.com/zhangchi0104/Astesia/compare/v2.5.2...v2.5.3) (2026-11-02)
 
 ### Bug Fixes
