@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use crate::ui::components::{prelude::*, Indicator, Tooltip};
 use crate::ui::modal::ModalLayer;
@@ -281,6 +281,9 @@ pub(super) struct AstesiaWorkspace {
     object_mutation_form_subscription: Option<Subscription>,
     copy_table_form_subscription: Option<Subscription>,
     command_palette_subscription: Option<Subscription>,
+    /// Where the status bar's MCP button was last painted, so the MCP
+    /// server window can open right above it.
+    mcp_button_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
 }
 
 struct WorkspaceTab {
@@ -360,6 +363,7 @@ impl AstesiaWorkspace {
             object_mutation_form_subscription: None,
             copy_table_form_subscription: None,
             command_palette_subscription: None,
+            mcp_button_bounds: Rc::default(),
         }
     }
 

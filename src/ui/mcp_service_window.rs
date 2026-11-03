@@ -6,7 +6,7 @@ use std::{net::TcpListener, sync::Arc, time::Duration};
 use crate::ui::components::prelude::*;
 use gpui_kit::{
     actions, point, px, size, AnyWindowHandle, App, Bounds, ClickEvent, ClipboardItem, Entity,
-    FocusHandle, Global, Subscription, Task, TitlebarOptions, WindowBounds, WindowKind,
+    FocusHandle, Global, Pixels, Subscription, Task, TitlebarOptions, WindowBounds, WindowKind,
     WindowOptions,
 };
 use ring::rand::{SecureRandom, SystemRandom};
@@ -22,8 +22,10 @@ actions!(astesia_mcp_service, [CloseMcpServiceWindow]);
 
 const WINDOW_WIDTH: f32 = 520.0;
 const WINDOW_HEIGHT: f32 = 360.0;
-/// Gap between the floating window and the main window's top-right corner.
-const WINDOW_INSET: f32 = 24.0;
+/// Gap between the floating window and the button that opened it.
+const ANCHOR_GAP: f32 = 6.0;
+/// Closest the window may come to the main window's left and top edges.
+const WINDOW_MARGIN: f32 = 8.0;
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
 pub(super) fn bind_mcp_service_window_keys(cx: &mut App) {
@@ -41,11 +43,13 @@ struct OpenMcpServiceWindow(Option<AnyWindowHandle>);
 
 impl Global for OpenMcpServiceWindow {}
 
-/// Opens the MCP server window floating above `parent`, or brings the open
-/// one to the front.
+/// Opens the MCP server window floating above `parent`, right above the
+/// status bar button at `anchor` (in `parent`'s coordinates), or brings the
+/// open one to the front.
 pub(super) fn open_mcp_service_window(
     application: Arc<Application>,
     settings: &Entity<ShellSettings>,
+    anchor: Bounds<Pixels>,
     parent: &Window,
     cx: &mut App,
 ) {
@@ -58,19 +62,15 @@ pub(super) fn open_mcp_service_window(
         }
     }
 
-    // Park the panel in the main window's top-right corner, where it covers
-    // the least of the editor.
     let window_size = size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT));
-    let parent_bounds = parent.bounds();
-    let bounds = if parent_bounds.size.width > window_size.width + px(WINDOW_INSET * 2.0) {
+    let bounds = if anchor.size.width > px(0.0) {
         Bounds::new(
-            point(
-                parent_bounds.right() - window_size.width - px(WINDOW_INSET),
-                parent_bounds.top() + px(WINDOW_INSET * 2.0),
-            ),
+            anchored_origin(parent.bounds(), anchor, window_size),
             window_size,
         )
     } else {
+        // The button has not been painted yet; fall back to the middle of
+        // the screen.
         Bounds::centered(None, window_size, cx)
     };
     let options = WindowOptions {
@@ -100,6 +100,21 @@ pub(super) fn open_mcp_service_window(
 struct LastMcpCredentials(Option<McpCredentials>);
 
 impl Global for LastMcpCredentials {}
+
+/// Screen position for a window of `window_size` whose bottom-right corner
+/// sits just above the right edge of `anchor`, a rectangle inside the parent
+/// window. The window is kept inside the parent's left and top edges.
+fn anchored_origin(
+    parent: Bounds<Pixels>,
+    anchor: Bounds<Pixels>,
+    window_size: gpui_kit::Size<Pixels>,
+) -> gpui_kit::Point<Pixels> {
+    let margin = px(WINDOW_MARGIN);
+    let x = (parent.origin.x + anchor.right() - window_size.width).max(parent.origin.x + margin);
+    let y = (parent.origin.y + anchor.top() - px(ANCHOR_GAP) - window_size.height)
+        .max(parent.origin.y + margin);
+    point(x, y)
+}
 
 #[derive(Clone)]
 struct McpCredentials {
@@ -537,4 +552,32 @@ fn status_field(label: impl Into<SharedString>, value: impl Into<SharedString>) 
         )
         .child(Label::new(value).size(LabelSize::XSmall))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    #[test]
+    fn window_sits_above_the_button_right_aligned() {
+        let parent = rect(100.0, 50.0, 1280.0, 800.0);
+        let button = rect(1070.0, 772.0, 24.0, 24.0);
+        let origin = anchored_origin(parent, button, size(px(520.0), px(360.0)));
+        assert_eq!(
+            origin,
+            point(px(100.0 + 1094.0 - 520.0), px(50.0 + 772.0 - 6.0 - 360.0))
+        );
+    }
+
+    #[test]
+    fn window_stays_inside_a_small_parent() {
+        let parent = rect(0.0, 0.0, 400.0, 300.0);
+        let button = rect(360.0, 276.0, 24.0, 24.0);
+        let origin = anchored_origin(parent, button, size(px(520.0), px(360.0)));
+        assert_eq!(origin, point(px(8.0), px(8.0)));
+    }
 }

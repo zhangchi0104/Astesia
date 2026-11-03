@@ -158,7 +158,8 @@ impl AstesiaWorkspace {
     }
 
     pub(super) fn open_mcp_service(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        open_mcp_service_window(self.application.clone(), &self.settings, window, cx);
+        let anchor = self.mcp_button_bounds.get();
+        open_mcp_service_window(self.application.clone(), &self.settings, anchor, window, cx);
     }
 
     pub(super) fn choose_backup_content(
