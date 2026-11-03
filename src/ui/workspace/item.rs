@@ -1,6 +1,6 @@
 use super::*;
 use crate::ui::{
-    document_item::DocumentItem, er_diagram_item::ErDiagramItem, mcp_service_item::McpServiceItem,
+    document_item::DocumentItem, er_diagram_item::ErDiagramItem,
     object_definition_item::ObjectDefinitionKind, performance_item::PerformanceItem,
     redis_item::RedisItem, task_center_item::TaskCenterItem,
 };
@@ -125,7 +125,6 @@ pub(super) enum WorkspaceItemKey {
     TaskCenter,
     Performance(QueryTarget),
     ErDiagram(QueryTarget),
-    McpService,
 }
 
 impl WorkspaceItemKey {
@@ -138,7 +137,7 @@ impl WorkspaceItemKey {
             | Self::Performance(target)
             | Self::ErDiagram(target)
             | Self::ObjectDefinition { target, .. } => Some(target),
-            Self::Query(_) | Self::TaskCenter | Self::McpService => None,
+            Self::Query(_) | Self::TaskCenter => None,
         }
     }
 }
@@ -409,19 +408,5 @@ impl WorkspaceItemBehavior for Entity<ErDiagramItem> {
     fn refresh_active_surface(&self, cx: &mut Context<AstesiaWorkspace>) -> bool {
         self.update(cx, |item, cx| item.refresh(cx));
         true
-    }
-}
-
-impl WorkspaceItemBehavior for Entity<McpServiceItem> {
-    fn label(&self, _fallback: &str, cx: &App) -> String {
-        self.read(cx).label()
-    }
-
-    fn element(&self) -> AnyElement {
-        self.clone().into_any_element()
-    }
-
-    fn focus(&self, window: &mut Window, cx: &mut Context<AstesiaWorkspace>) {
-        self.update(cx, |item, cx| item.focus(window, cx));
     }
 }

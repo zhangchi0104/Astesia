@@ -530,8 +530,8 @@ impl SettingsWindow {
             .child(
                 Label::new(text(
                     language,
-                    "Astesia 作为一台独立的设备加入 tailnet，使用自己的账户，与系统中安装的 Tailscale 客户端互不影响。勾选了“通过内置 Tailscale 连接”的数据库连接会经由这台设备访问。",
-                    "Astesia joins the tailnet as its own device with its own account, separate from the Tailscale client installed on this computer. Connections with “Connect through built-in Tailscale” turned on go through this device.",
+                    "Astesia 作为一台独立的设备加入 tailnet，使用自己的账户，与系统中安装的 Tailscale 客户端互不影响。勾选了“通过内置 Tailscale 连接”的数据库连接会经由这台设备访问，MCP 服务也会复用这里的登录。",
+                    "Astesia joins the tailnet as its own device with its own account, separate from the Tailscale client installed on this computer. Connections with “Connect through built-in Tailscale” turned on go through this device, including when the MCP server uses them.",
                 ))
                 .size(LabelSize::XSmall)
                 .color(Color::Muted),

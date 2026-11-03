@@ -131,6 +131,7 @@ pub(crate) struct NotificationCenter {
     next_id: u64,
     notifications: Vec<Notification>,
     hovered: Option<u64>,
+    bottom_offset: Pixels,
 }
 
 /// Lets any view reach the workspace's [`NotificationCenter`] without having
@@ -157,7 +158,15 @@ impl NotificationCenter {
             next_id: 0,
             notifications: Vec::new(),
             hovered: None,
+            bottom_offset: px(STATUS_BAR_HEIGHT + 12.0),
         }
+    }
+
+    /// Distance between the stack and the bottom edge of its container. The
+    /// default clears the workspace status bar.
+    pub(super) fn bottom_offset(mut self, offset: Pixels) -> Self {
+        self.bottom_offset = offset;
+        self
     }
 
     /// Makes this center the target of [`show_notification`].
@@ -246,7 +255,7 @@ impl Render for NotificationCenter {
         let surface = cx.theme().colors().elevated_surface_background;
         v_flex()
             .absolute()
-            .bottom(px(STATUS_BAR_HEIGHT + 12.0))
+            .bottom(self.bottom_offset)
             .right_3()
             .w(px(360.0))
             .gap_2()
