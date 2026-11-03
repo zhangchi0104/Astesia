@@ -248,62 +248,44 @@ impl NotificationCenter {
 const STATUS_BAR_HEIGHT: f32 = 32.0;
 
 impl Render for NotificationCenter {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::ThemeStyled as _;
+
         let status = cx.theme().status();
-        // The tone backgrounds are translucent tints, so each toast is layered
-        // on an opaque surface to stay readable over grids and editors.
-        let surface = cx.theme().colors().elevated_surface_background;
-        v_flex()
-            .absolute()
-            .bottom(self.bottom_offset)
-            .right_3()
-            .w(px(360.0))
-            .gap_2()
-            .children(self.notifications.iter().map(|notification| {
+        let toasts = self
+            .notifications
+            .iter()
+            .map(|notification| {
                 let id = notification.id;
-                let (foreground, background, border, icon) = match notification.tone {
-                    NotificationTone::Info => (
-                        status.info,
-                        status.info_background,
-                        status.info_border,
-                        IconName::Info,
-                    ),
-                    NotificationTone::Success => (
-                        status.success,
-                        status.success_background,
-                        status.success_border,
-                        IconName::CircleCheck,
-                    ),
-                    NotificationTone::Warning => (
-                        status.warning,
-                        status.warning_background,
-                        status.warning_border,
-                        IconName::TriangleAlert,
-                    ),
-                    NotificationTone::Error => (
-                        status.error,
-                        status.error_background,
-                        status.error_border,
-                        IconName::CircleX,
-                    ),
+                let (accent, icon) = match notification.tone {
+                    NotificationTone::Info => (status.info, IconName::Info),
+                    NotificationTone::Success => (status.success, IconName::CircleCheck),
+                    NotificationTone::Warning => (status.warning, IconName::TriangleAlert),
+                    NotificationTone::Error => (status.error, IconName::CircleX),
                 };
-                let toast = h_flex()
+                // Each toast is a popover: the theme's popover surface,
+                // shadow and radius, with only the icon carrying the tone.
+                h_flex()
+                    .id(format!("notification-{id}"))
+                    .occlude()
+                    .w_full()
                     .items_start()
                     .gap_2()
                     .p_2()
-                    .rounded_md()
-                    .bg(background)
+                    .popover_style(cx)
+                    .on_hover(cx.listener(move |center, hovered: &bool, _, cx| {
+                        center.set_hovered(id, *hovered, cx);
+                    }))
                     .child(
                         div().pt(px(2.0)).child(
                             Icon::new(icon)
                                 .size(IconSize::XSmall)
-                                .color(Color::Custom(foreground)),
+                                .color(Color::Custom(accent)),
                         ),
                     )
                     .child(
                         Label::new(notification.message.clone())
                             .size(LabelSize::XSmall)
-                            .color(Color::Custom(foreground))
                             .line_clamp(4)
                             .flex_1(),
                     )
@@ -313,19 +295,30 @@ impl Render for NotificationCenter {
                             .on_click(cx.listener(move |center, _, _, cx| {
                                 center.dismiss(id, cx);
                             })),
-                    );
-                div()
-                    .id(format!("notification-{id}"))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(border)
-                    .bg(surface)
-                    .shadow_md()
-                    .on_hover(cx.listener(move |center, hovered: &bool, _, cx| {
-                        center.set_hovered(id, *hovered, cx);
-                    }))
-                    .child(toast)
-            }))
+                    )
+            })
+            .collect::<Vec<_>>();
+        if toasts.is_empty() {
+            return div().into_any_element();
+        }
+
+        // Rendered in the deferred popover layer so the stack floats above
+        // modals, menus and other overlays instead of being painted (or
+        // clipped) in the workspace's normal flow.
+        let viewport = window.viewport_size();
+        let corner = point(
+            viewport.width - px(12.0),
+            viewport.height - self.bottom_offset,
+        );
+        deferred(
+            anchored()
+                .position(corner)
+                .anchor(Anchor::BottomRight)
+                .snap_to_window()
+                .child(v_flex().w(px(360.0)).gap_2().children(toasts)),
+        )
+        .with_priority(4)
+        .into_any_element()
     }
 }
 
