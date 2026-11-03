@@ -40,15 +40,15 @@ impl DataGridItem {
         }
         .map(str::to_string);
         if let Some(message) = blocked {
-            self.operation_notice = Some(GridNotice::Warning(message));
+            self.show_notice(GridNotice::Warning(message), cx);
             cx.notify();
             return;
         }
         if !matches!(self.state.editability(), GridEditability::Editable { .. }) {
-            self.operation_notice = Some(GridNotice::Warning(editability_label(
-                self.state.editability(),
-                language,
-            )));
+            self.show_notice(
+                GridNotice::Warning(editability_label(self.state.editability(), language)),
+                cx,
+            );
             cx.notify();
             return;
         }
@@ -180,7 +180,6 @@ impl DataGridItem {
             error: None,
             _observation: observation,
         });
-        self.operation_notice = None;
         window.focus(&editor.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
@@ -238,7 +237,6 @@ impl DataGridItem {
         match staged {
             Ok(_) => {
                 self.editing = None;
-                self.operation_notice = None;
                 window.focus(&self.focus_handle, cx);
                 cx.notify();
                 true
@@ -326,14 +324,12 @@ impl DataGridItem {
         match self.state.unset_draft_value(draft_id, column) {
             Ok(_) => {
                 self.editing = None;
-                self.operation_notice = None;
                 window.focus(&self.focus_handle, cx);
                 cx.notify();
             }
             Err(error) => {
                 let language = self.settings.read(cx).language();
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_error_message(error, language)));
+                self.show_notice(GridNotice::Error(grid_error_message(error, language)), cx);
                 cx.notify();
             }
         }
@@ -412,13 +408,11 @@ impl DataGridItem {
             Ok(request) => request,
             Err(error) => {
                 let language = self.settings.read(cx).language();
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_error_message(error, language)));
+                self.show_notice(GridNotice::Error(grid_error_message(error, language)), cx);
                 cx.notify();
                 return;
             }
         };
-        self.operation_notice = None;
         cx.notify();
 
         let application = self.application.clone();
@@ -457,18 +451,21 @@ impl DataGridItem {
                 }
                 if let Some(outcome) = outcome {
                     let language = item.settings.read(cx).language();
-                    item.operation_notice = Some(if item.manual_transaction {
-                        GridNotice::Warning(
-                            text(
-                                language,
-                                "更改已写入事务，尚未提交。",
-                                "Changes applied to the transaction; not committed.",
+                    item.show_notice(
+                        if item.manual_transaction {
+                            GridNotice::Warning(
+                                text(
+                                    language,
+                                    "更改已写入事务，尚未提交。",
+                                    "Changes applied to the transaction; not committed.",
+                                )
+                                .to_string(),
                             )
-                            .to_string(),
-                        )
-                    } else {
-                        GridNotice::Success(save_outcome_message(outcome, language))
-                    });
+                        } else {
+                            GridNotice::Success(save_outcome_message(outcome, language))
+                        },
+                        cx,
+                    );
                     item.load(cx);
                 } else {
                     cx.notify();
@@ -500,7 +497,6 @@ impl DataGridItem {
     pub(super) fn undo_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_cell_edit(window, cx);
         if self.state.undo() {
-            self.operation_notice = None;
             cx.notify();
         }
     }
@@ -556,7 +552,6 @@ impl DataGridItem {
             }
             item.update_in(cx, |item, window, cx| {
                 item.editing = None;
-                item.operation_notice = None;
                 let unknown_outcome = item.save_recovery_sql.take().is_some();
                 let reload =
                     item.state.discard_changes() && item.state.page().is_none() || unknown_outcome;

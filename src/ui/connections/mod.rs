@@ -72,7 +72,6 @@ pub(super) struct ConnectionProfilesPanel {
     selected_sidebar_row: Option<String>,
     selected_profile_focus: gpui_kit::FocusHandle,
     selected_query_target: Option<QueryTarget>,
-    notice: Option<PanelNotice>,
     failed_profiles: HashSet<String>,
     collapsed_groups: HashSet<Option<String>>,
     collapsed_schemas: HashSet<(String, u64, String, String)>,
@@ -189,18 +188,7 @@ pub(super) enum ConnectionActivityStatus {
     Ready,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NoticeTone {
-    Info,
-    Warning,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PanelNotice {
-    tone: NoticeTone,
-    message: String,
-}
+use crate::ui::shell::NotificationTone as NoticeTone;
 
 impl EventEmitter<ConnectionProfilesEvent> for ConnectionProfilesPanel {}
 
@@ -272,7 +260,6 @@ impl ConnectionProfilesPanel {
             selected_sidebar_row: None,
             selected_profile_focus: cx.focus_handle().tab_stop(true),
             selected_query_target: None,
-            notice: None,
             failed_profiles: HashSet::new(),
             collapsed_groups: HashSet::new(),
             collapsed_schemas: HashSet::new(),

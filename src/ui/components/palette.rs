@@ -33,6 +33,7 @@ pub struct WorkspaceStatus {
     pub info: Hsla,
     pub info_background: Hsla,
     pub info_border: Hsla,
+    pub success: Hsla,
     pub success_background: Hsla,
     pub success_border: Hsla,
 }
@@ -66,6 +67,7 @@ impl WorkspaceTheme for Theme {
             info: self.info,
             info_background: self.info.opacity(0.12),
             info_border: self.info,
+            success: self.success,
             success_background: self.success.opacity(0.12),
             success_border: self.success,
         }

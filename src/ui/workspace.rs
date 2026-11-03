@@ -170,6 +170,7 @@ impl AstesiaRoot {
                             )
                         });
                         let notifications = cx.new(|_| NotificationCenter::new());
+                        NotificationCenter::register(&notifications, cx);
                         if let Some(warning) = root.preferences_warning.take() {
                             notifications.update(cx, |center, cx| {
                                 center.push(NotificationTone::Warning, warning, cx);
@@ -318,7 +319,7 @@ impl AstesiaWorkspace {
                     workspace
                         .update(cx, |workspace, cx| {
                             let tone = match &task.status {
-                                crate::tasks::TaskStatus::Completed => NotificationTone::Info,
+                                crate::tasks::TaskStatus::Completed => NotificationTone::Success,
                                 crate::tasks::TaskStatus::Partial
                                 | crate::tasks::TaskStatus::Cancelled => NotificationTone::Warning,
                                 crate::tasks::TaskStatus::Failed => NotificationTone::Error,
@@ -506,7 +507,7 @@ impl AstesiaWorkspace {
                 let language = workspace.settings.read(cx).language();
                 workspace.notifications.update(cx, |center, cx| {
                     center.push(
-                        NotificationTone::Info,
+                        NotificationTone::Success,
                         format!(
                             "{}: {}",
                             text(language, "连接配置已保存", "Connection profile saved"),
@@ -552,7 +553,7 @@ impl AstesiaWorkspace {
                 });
                 workspace.notifications.update(cx, |center, cx| {
                     center.push(
-                        NotificationTone::Info,
+                        NotificationTone::Success,
                         format!(
                             "{}: {}",
                             text(

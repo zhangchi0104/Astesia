@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use crate::ui::components::{prelude::*, Indicator, Tooltip};
+use crate::ui::shell::{show_notification, NotificationTone};
 use crate::ui::text_editor::{Editor, EditorEvent};
 use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::{
@@ -155,12 +156,20 @@ enum GridNotice {
 }
 
 impl GridNotice {
-    fn presentation(self) -> (Color, IconName, String) {
+    fn into_notification(self) -> (NotificationTone, String) {
         match self {
-            Self::Success(message) => (Color::Success, IconName::Check, message),
-            Self::Warning(message) => (Color::Warning, IconName::TriangleAlert, message),
-            Self::Error(message) => (Color::Error, IconName::TriangleAlert, message),
+            Self::Success(message) => (NotificationTone::Success, message),
+            Self::Warning(message) => (NotificationTone::Warning, message),
+            Self::Error(message) => (NotificationTone::Error, message),
         }
+    }
+}
+
+impl DataGridItem {
+    /// Reports the outcome of a grid action in the workspace notification stack.
+    fn show_notice(&self, notice: GridNotice, cx: &mut App) {
+        let (tone, message) = notice.into_notification();
+        show_notification(tone, message, cx);
     }
 }
 
@@ -189,7 +198,6 @@ pub(super) struct DataGridItem {
     active_cell: Option<GridCell>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     editing: Option<ActiveCellEditor>,
-    operation_notice: Option<GridNotice>,
     export_in_progress: bool,
     transaction: Option<crate::application::GridTransaction>,
     manual_transaction: bool,
@@ -293,7 +301,6 @@ impl DataGridItem {
             active_cell: None,
             context_menu: None,
             editing: None,
-            operation_notice: None,
             export_in_progress: false,
             transaction: None,
             manual_transaction: false,

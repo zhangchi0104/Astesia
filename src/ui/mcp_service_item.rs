@@ -9,7 +9,10 @@ use crate::{
     mcp_runtime::{McpServicePhase, McpServiceStatus},
 };
 
-use super::{localization::text, shell::ShellSettings};
+use super::{
+    localization::text,
+    shell::{show_notification, NotificationTone, ShellSettings},
+};
 
 #[derive(Clone)]
 struct McpCredentials {
@@ -22,7 +25,6 @@ pub(super) struct McpServiceItem {
     status: Option<McpServiceStatus>,
     credentials: Option<McpCredentials>,
     busy: bool,
-    notice: Option<Result<String, String>>,
     request_generation: u64,
     focus_handle: FocusHandle,
     settings: gpui_kit::Entity<ShellSettings>,
@@ -30,6 +32,15 @@ pub(super) struct McpServiceItem {
 }
 
 impl McpServiceItem {
+    /// Reports an action's outcome in the workspace notification stack.
+    fn show_notice(&self, notice: Result<String, String>, cx: &mut App) {
+        let (tone, message) = match notice {
+            Ok(message) => (NotificationTone::Success, message),
+            Err(message) => (NotificationTone::Error, message),
+        };
+        show_notification(tone, message, cx);
+    }
+
     pub(super) fn new(
         application: Arc<Application>,
         settings: gpui_kit::Entity<ShellSettings>,
@@ -41,7 +52,6 @@ impl McpServiceItem {
             status: None,
             credentials: None,
             busy: false,
-            notice: None,
             request_generation: 0,
             focus_handle: cx.focus_handle(),
             settings,
@@ -65,7 +75,7 @@ impl McpServiceItem {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(runtime) = self.application.mcp().cloned() else {
-            self.notice = Some(Err("MCP runtime is not configured".to_string()));
+            self.show_notice(Err("MCP runtime is not configured".to_string()), cx);
             cx.notify();
             return;
         };
@@ -80,7 +90,7 @@ impl McpServiceItem {
                 }
                 match result {
                     Ok(status) => item.status = Some(status),
-                    Err(error) => item.notice = Some(Err(error)),
+                    Err(error) => item.show_notice(Err(error), cx),
                 }
                 cx.notify();
             })
@@ -93,7 +103,7 @@ impl McpServiceItem {
         let credentials = match generate_credentials() {
             Ok(credentials) => credentials,
             Err(error) => {
-                self.notice = Some(Err(error));
+                self.show_notice(Err(error), cx);
                 cx.notify();
                 return;
             }
@@ -109,7 +119,7 @@ impl McpServiceItem {
         let credentials = match generate_credentials() {
             Ok(credentials) => credentials,
             Err(error) => {
-                self.notice = Some(Err(error));
+                self.show_notice(Err(error), cx);
                 cx.notify();
                 return;
             }
@@ -122,14 +132,13 @@ impl McpServiceItem {
             return;
         }
         let Some(runtime) = self.application.mcp().cloned() else {
-            self.notice = Some(Err("MCP runtime is not configured".to_string()));
+            self.show_notice(Err("MCP runtime is not configured".to_string()), cx);
             cx.notify();
             return;
         };
         self.request_generation = self.request_generation.saturating_add(1);
         let generation = self.request_generation;
         self.busy = true;
-        self.notice = None;
         cx.notify();
         let next_credentials = operation.credentials().cloned();
         let operation = crate::ui::runtime::spawn(cx, async move {
@@ -161,9 +170,9 @@ impl McpServiceItem {
                     Ok(status) => {
                         item.status = Some(status);
                         item.credentials = next_credentials;
-                        item.notice = Some(Ok("MCP service state updated".to_string()));
+                        item.show_notice(Ok("MCP service state updated".to_string()), cx);
                     }
-                    Err(error) => item.notice = Some(Err(error)),
+                    Err(error) => item.show_notice(Err(error), cx),
                 }
                 cx.notify();
             })
@@ -180,10 +189,13 @@ impl McpServiceItem {
             return;
         };
         let Some(credentials) = self.credentials.as_ref() else {
-            self.notice = Some(Err(
-                "Start or restart the MCP service in this session before copying its token"
-                    .to_string(),
-            ));
+            self.show_notice(
+                Err(
+                    "Start or restart the MCP service in this session before copying its token"
+                        .to_string(),
+                ),
+                cx,
+            );
             cx.notify();
             return;
         };
@@ -201,9 +213,9 @@ impl McpServiceItem {
         match serde_json::to_string_pretty(&config) {
             Ok(config) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(config));
-                self.notice = Some(Ok("MCP client configuration copied".to_string()));
+                self.show_notice(Ok("MCP client configuration copied".to_string()), cx);
             }
-            Err(error) => self.notice = Some(Err(error.to_string())),
+            Err(error) => self.show_notice(Err(error.to_string()), cx),
         }
         cx.notify();
     }
@@ -318,13 +330,6 @@ impl Render for McpServiceItem {
                             element.child(Label::new(error).size(LabelSize::XSmall).color(Color::Error))
                         },
                     )
-                    .when_some(self.notice.clone(), |element, notice| {
-                        let (message, color) = match notice {
-                            Ok(message) => (message, Color::Success),
-                            Err(message) => (message, Color::Error),
-                        };
-                        element.child(Label::new(message).size(LabelSize::XSmall).color(color))
-                    })
                     .child(
                         h_flex()
                             .gap_2()

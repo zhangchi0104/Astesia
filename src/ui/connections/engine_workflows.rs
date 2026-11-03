@@ -4,7 +4,7 @@ use gpui_kit::{ClickEvent, Context, Render, Window};
 use crate::application::QueryTarget;
 use crate::db::{TableInfo, TableRef};
 
-use super::{ConnectionProfilesEvent, ConnectionProfilesPanel, NoticeTone, PanelNotice};
+use super::{ConnectionProfilesEvent, ConnectionProfilesPanel, NoticeTone};
 
 #[derive(Clone, Debug)]
 pub(super) struct DraggedTableCopy {
@@ -135,6 +135,7 @@ impl ConnectionProfilesPanel {
         self.set_notice(
             NoticeTone::Info,
             format!("Copied {identity}; choose a target database"),
+            cx,
         );
         self.notify_sidebar(cx);
     }
@@ -185,10 +186,7 @@ impl ConnectionProfilesPanel {
                         return;
                     }
                     if let Err(error) = result {
-                        panel.notice = Some(PanelNotice {
-                            tone: NoticeTone::Error,
-                            message: error,
-                        });
+                        panel.set_notice(NoticeTone::Error, error, cx);
                         panel.notify_sidebar(cx);
                         return;
                     }

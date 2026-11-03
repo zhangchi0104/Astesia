@@ -1,7 +1,7 @@
 use crate::ui::components::prelude::*;
 use gpui_kit::{PromptButton, PromptLevel, Window};
 
-use super::{ConnectionProfilesEvent, ConnectionProfilesPanel, NoticeTone, PanelNotice};
+use super::{ConnectionProfilesEvent, ConnectionProfilesPanel, NoticeTone};
 use crate::application::{DatabaseObjectKind, ObjectMutation, QueryTarget};
 use crate::ui::localization::text;
 use crate::ui::object_mutation_form::{kind_label, ObjectMutationFormMode};
@@ -115,7 +115,6 @@ impl ConnectionProfilesPanel {
             return;
         }
         self.object_operation_in_progress = true;
-        self.notice = None;
         cx.notify();
         let application = self.application.clone();
         let operation_target = target.clone();
@@ -137,9 +136,9 @@ impl ConnectionProfilesPanel {
                     panel.object_operation_in_progress = false;
                     match result {
                         Ok(()) => {
-                            panel.notice = Some(PanelNotice {
-                                tone: NoticeTone::Info,
-                                message: format!(
+                            panel.set_notice(
+                                NoticeTone::Success,
+                                format!(
                                     "{}: {identity}",
                                     text(
                                         panel.settings.read(cx).language(),
@@ -147,14 +146,12 @@ impl ConnectionProfilesPanel {
                                         "Database object dropped"
                                     )
                                 ),
-                            });
+                                cx,
+                            );
                             panel.object_mutated(target, kind == DatabaseObjectKind::Database, cx);
                         }
                         Err(error) => {
-                            panel.notice = Some(PanelNotice {
-                                tone: NoticeTone::Error,
-                                message: error,
-                            });
+                            panel.set_notice(NoticeTone::Error, error, cx);
                             cx.notify();
                         }
                     }

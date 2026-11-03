@@ -111,25 +111,31 @@ impl DataGridItem {
                 Ok(Ok(Some(path))) => item.start_export(path, format, all_rows, cx),
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => {
-                    item.operation_notice = Some(GridNotice::Error(format!(
-                        "{}: {error}",
-                        text(
-                            item.settings.read(cx).language(),
-                            "无法打开导出文件选择器",
-                            "Could not open the export file picker"
-                        )
-                    )));
+                    item.show_notice(
+                        GridNotice::Error(format!(
+                            "{}: {error}",
+                            text(
+                                item.settings.read(cx).language(),
+                                "无法打开导出文件选择器",
+                                "Could not open the export file picker"
+                            )
+                        )),
+                        cx,
+                    );
                     cx.notify();
                 }
                 Err(error) => {
-                    item.operation_notice = Some(GridNotice::Error(format!(
-                        "{}: {error}",
-                        text(
-                            item.settings.read(cx).language(),
-                            "导出文件选择器意外结束",
-                            "The export file picker ended unexpectedly"
-                        )
-                    )));
+                    item.show_notice(
+                        GridNotice::Error(format!(
+                            "{}: {error}",
+                            text(
+                                item.settings.read(cx).language(),
+                                "导出文件选择器意外结束",
+                                "The export file picker ended unexpectedly"
+                            )
+                        )),
+                        cx,
+                    );
                     cx.notify();
                 }
             })
@@ -149,7 +155,7 @@ impl DataGridItem {
             match grid_export_sql(&self.state) {
                 Ok(sql) => ExportSource::Sql { sql },
                 Err(error) => {
-                    self.operation_notice = Some(GridNotice::Error(error));
+                    self.show_notice(GridNotice::Error(error), cx);
                     cx.notify();
                     return;
                 }
@@ -165,7 +171,6 @@ impl DataGridItem {
             return;
         }
         self.export_in_progress = true;
-        self.operation_notice = None;
         cx.notify();
         let application = self.application.clone();
         let target = self.state.target().clone();
@@ -197,17 +202,20 @@ impl DataGridItem {
             };
             item.update(cx, |item, cx| {
                 item.export_in_progress = false;
-                item.operation_notice = Some(match result {
-                    Ok((task_id, path)) => GridNotice::Success(format!(
-                        "{} {task_id}: {path}",
-                        text(
-                            item.settings.read(cx).language(),
-                            "导出任务已启动",
-                            "Export task started"
-                        )
-                    )),
-                    Err(error) => GridNotice::Error(error),
-                });
+                item.show_notice(
+                    match result {
+                        Ok((task_id, path)) => GridNotice::Success(format!(
+                            "{} {task_id}: {path}",
+                            text(
+                                item.settings.read(cx).language(),
+                                "导出任务已启动",
+                                "Export task started"
+                            )
+                        )),
+                        Err(error) => GridNotice::Error(error),
+                    },
+                    cx,
+                );
                 cx.notify();
             })
             .ok();

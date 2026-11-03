@@ -93,10 +93,7 @@ impl ConnectionProfilesPanel {
             panel
                 .update(cx, |panel, cx| {
                     if let Err(error) = result {
-                        panel.notice = Some(PanelNotice {
-                            tone: NoticeTone::Error,
-                            message: error,
-                        });
+                        panel.set_notice(NoticeTone::Error, error, cx);
                         panel.notify_sidebar(cx);
                         return;
                     }

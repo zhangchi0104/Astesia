@@ -134,7 +134,6 @@ impl ConnectionProfilesPanel {
         else {
             return;
         };
-        self.notice = None;
         self.failed_profiles.remove(&connection_id);
         self.notify_sidebar(cx);
         self.run_profile_operation(
@@ -163,7 +162,6 @@ impl ConnectionProfilesPanel {
         };
         self.state.clear_database_state(&connection_id);
         self.invalidate_query_session(&connection_id, cx);
-        self.notice = None;
         self.notify_sidebar(cx);
         self.run_profile_operation(
             request,
@@ -224,7 +222,7 @@ impl ConnectionProfilesPanel {
                             Err(ConnectionWorkspaceError::operation(operation_name, error)),
                         ) != OperationApply::Discarded
                         {
-                            panel.set_notice(NoticeTone::Error, unexpected_message);
+                            panel.set_notice(NoticeTone::Error, unexpected_message, cx);
                             panel.notify_sidebar(cx);
                         }
                     }
@@ -264,7 +262,7 @@ impl ConnectionProfilesPanel {
                 self.reconcile_selection();
                 self.reconcile_query_target(cx);
                 self.emit_query_sessions(cx);
-                if self.apply_operation_outcome(completion.outcome, language) {
+                if self.apply_operation_outcome(completion.outcome, language, cx) {
                     self.load_databases(connection_id.to_string(), cx);
                 }
             }
@@ -272,10 +270,11 @@ impl ConnectionProfilesPanel {
                 self.set_notice(
                     NoticeTone::Error,
                     operation_snapshot_failure_message(&completion.outcome, language),
+                    cx,
                 );
             }
             OperationApply::Snapshot(SnapshotApply::Superseded) => {
-                self.apply_superseded_outcome(completion.outcome, language);
+                self.apply_superseded_outcome(completion.outcome, language, cx);
                 self.refresh_profiles(cx);
             }
         }
@@ -286,6 +285,7 @@ impl ConnectionProfilesPanel {
         &mut self,
         outcome: ProfileOperationOutcome,
         language: crate::platform::UiLanguage,
+        cx: &mut App,
     ) -> bool {
         match outcome {
             ProfileOperationOutcome::Connected(Ok(ConnectionOutcome::Succeeded)) => true,
@@ -297,16 +297,17 @@ impl ConnectionProfilesPanel {
                         "{}: {message}",
                         text(language, "连接失败", "Connection failed")
                     ),
+                    cx,
                 );
                 false
             }
             ProfileOperationOutcome::Disconnected(report) => {
                 let tone = if report.is_complete() {
-                    NoticeTone::Info
+                    NoticeTone::Success
                 } else {
                     NoticeTone::Warning
                 };
-                self.set_notice(tone, report.message());
+                self.set_notice(tone, report.message(), cx);
                 false
             }
             ProfileOperationOutcome::Deleted(Ok(deleted)) => {
@@ -319,11 +320,11 @@ impl ConnectionProfilesPanel {
                 } else {
                     text(language, "连接配置已删除", "Connection profile deleted")
                 };
-                self.set_notice(NoticeTone::Info, message);
+                self.set_notice(NoticeTone::Success, message, cx);
                 false
             }
             ProfileOperationOutcome::Deleted(Err(error)) => {
-                self.set_notice(NoticeTone::Error, repository_error_message(&error));
+                self.set_notice(NoticeTone::Error, repository_error_message(&error), cx);
                 false
             }
         }
@@ -333,6 +334,7 @@ impl ConnectionProfilesPanel {
         &mut self,
         outcome: ProfileOperationOutcome,
         language: crate::platform::UiLanguage,
+        cx: &mut App,
     ) {
         match outcome {
             ProfileOperationOutcome::Connected(_) => self.set_notice(
@@ -342,6 +344,7 @@ impl ConnectionProfilesPanel {
                     "连接结果已返回，正在重新同步最新状态…",
                     "The connect result arrived; resyncing the latest state…",
                 ),
+                cx,
             ),
             ProfileOperationOutcome::Disconnected(_) => self.set_notice(
                 NoticeTone::Warning,
@@ -350,6 +353,7 @@ impl ConnectionProfilesPanel {
                     "断开结果已返回，正在重新同步最新状态…",
                     "The disconnect result arrived; resyncing the latest state…",
                 ),
+                cx,
             ),
             ProfileOperationOutcome::Deleted(Ok(_)) => self.set_notice(
                 NoticeTone::Warning,
@@ -358,9 +362,10 @@ impl ConnectionProfilesPanel {
                     "连接配置已删除，正在重新同步最新列表…",
                     "The connection profile was deleted; resyncing the latest list…",
                 ),
+                cx,
             ),
             ProfileOperationOutcome::Deleted(Err(error)) => {
-                self.set_notice(NoticeTone::Error, repository_error_message(&error))
+                self.set_notice(NoticeTone::Error, repository_error_message(&error), cx)
             }
         }
     }
@@ -444,7 +449,6 @@ impl ConnectionProfilesPanel {
             return;
         };
         self.invalidate_query_session(&connection_id, cx);
-        self.notice = None;
         self.notify_sidebar(cx);
         self.run_profile_operation(
             request,
