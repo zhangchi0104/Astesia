@@ -283,8 +283,13 @@ pub(super) struct AstesiaWorkspace {
     copy_table_form_subscription: Option<Subscription>,
     command_palette_subscription: Option<Subscription>,
     /// Where the status bar's MCP button was last painted, so the MCP
-    /// server window can open right above it.
+    /// server popover can open right above it.
     mcp_button_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
+    /// The open MCP server popover and its dismiss subscription.
+    mcp_service: Option<(
+        Entity<crate::ui::mcp_service_popover::McpServicePopover>,
+        Subscription,
+    )>,
 }
 
 struct WorkspaceTab {
@@ -365,6 +370,7 @@ impl AstesiaWorkspace {
             copy_table_form_subscription: None,
             command_palette_subscription: None,
             mcp_button_bounds: Rc::default(),
+            mcp_service: None,
         }
     }
 

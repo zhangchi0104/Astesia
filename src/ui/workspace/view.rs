@@ -221,10 +221,47 @@ impl Render for AstesiaWorkspace {
                             .color(Color::Muted),
                     ),
             )
+            .children(self.render_mcp_service(cx))
             .child(self.modal_layer.clone())
             .child(self.notifications.clone())
     }
 }
+
+impl AstesiaWorkspace {
+    /// The MCP server popover, hanging above the status bar button that
+    /// opened it with its right edge aligned to the button.
+    fn render_mcp_service(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (popover, _) = self.mcp_service.as_ref()?;
+        let button = self.mcp_button_bounds.clone();
+        let anchor = button.get();
+        let position = point(anchor.right(), anchor.top() - px(MCP_POPOVER_GAP));
+        Some(
+            deferred(
+                anchored()
+                    .position(position)
+                    .anchor(Anchor::BottomRight)
+                    .snap_to_window_with_margin(px(8.0))
+                    .child(
+                        div()
+                            .on_mouse_down_out(cx.listener(
+                                move |workspace, event: &gpui_kit::MouseDownEvent, window, cx| {
+                                    // The button toggles the popover itself.
+                                    if !button.get().contains(&event.position) {
+                                        workspace.close_mcp_service(window, cx);
+                                    }
+                                },
+                            ))
+                            .child(popover.clone()),
+                    ),
+            )
+            .with_priority(2)
+            .into_any_element(),
+        )
+    }
+}
+
+/// Gap between the MCP popover and the status bar button below it.
+const MCP_POPOVER_GAP: f32 = 6.0;
 
 fn sidebar_layout(
     sidebar: impl IntoElement,

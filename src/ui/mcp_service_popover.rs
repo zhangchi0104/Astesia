@@ -1,13 +1,12 @@
-//! The MCP server panel: a small floating window that stays above the
-//! workspace while the user wires up an MCP client.
+//! The MCP server panel: a popover anchored above the status-bar MCP button
+//! that stays inside the main window while the user wires up an MCP client.
 
 use std::{net::TcpListener, sync::Arc, time::Duration};
 
 use crate::ui::components::prelude::*;
 use gpui_kit::{
-    actions, point, px, size, AnyWindowHandle, App, Bounds, ClickEvent, ClipboardItem, Entity,
-    FocusHandle, Global, Pixels, Subscription, Task, TitlebarOptions, WindowBounds, WindowKind,
-    WindowOptions,
+    actions, px, App, ClickEvent, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, Global,
+    Subscription, Task,
 };
 use ring::rand::{SecureRandom, SystemRandom};
 
@@ -18,106 +17,29 @@ use crate::{
 
 use super::{
     localization::text,
-    shell::{NotificationCenter, NotificationTone, ShellSettings},
+    shell::{show_notification, NotificationTone, ShellSettings},
 };
 
-actions!(astesia_mcp_service, [CloseMcpServiceWindow]);
+actions!(astesia_mcp_service, [CloseMcpServicePopover]);
 
-const WINDOW_WIDTH: f32 = 520.0;
-const WINDOW_HEIGHT: f32 = 360.0;
-/// Gap between the floating window and the button that opened it.
-const ANCHOR_GAP: f32 = 6.0;
-/// Closest the window may come to the main window's left and top edges.
-const WINDOW_MARGIN: f32 = 8.0;
+pub(super) const POPOVER_WIDTH: f32 = 520.0;
+pub(super) const POPOVER_HEIGHT: f32 = 360.0;
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
-pub(super) fn bind_mcp_service_window_keys(cx: &mut App) {
-    cx.bind_keys([
-        gpui_kit::KeyBinding::new("cmd-w", CloseMcpServiceWindow, Some("McpServiceWindow")),
-        gpui_kit::KeyBinding::new("ctrl-w", CloseMcpServiceWindow, Some("McpServiceWindow")),
-        gpui_kit::KeyBinding::new("escape", CloseMcpServiceWindow, Some("McpServiceWindow")),
-    ]);
-}
-
-/// The open MCP server window, so a second request focuses it instead of
-/// opening another one.
-#[derive(Default)]
-struct OpenMcpServiceWindow(Option<AnyWindowHandle>);
-
-impl Global for OpenMcpServiceWindow {}
-
-/// Opens the MCP server window floating above `parent`, right above the
-/// status bar button at `anchor` (in `parent`'s coordinates), or brings the
-/// open one to the front.
-pub(super) fn open_mcp_service_window(
-    application: Arc<Application>,
-    settings: &Entity<ShellSettings>,
-    anchor: Bounds<Pixels>,
-    parent: &Window,
-    cx: &mut App,
-) {
-    if let Some(handle) = cx.default_global::<OpenMcpServiceWindow>().0 {
-        if handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-        {
-            return;
-        }
-    }
-
-    let window_size = size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT));
-    let bounds = if anchor.size.width > px(0.0) {
-        Bounds::new(
-            anchored_origin(parent.bounds(), anchor, window_size),
-            window_size,
-        )
-    } else {
-        // The button has not been painted yet; fall back to the middle of
-        // the screen.
-        Bounds::centered(None, window_size, cx)
-    };
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(TitlebarOptions {
-            title: Some("MCP Server".into()),
-            ..Default::default()
-        }),
-        kind: WindowKind::Floating,
-        window_min_size: Some(size(px(420.0), px(300.0))),
-        ..Default::default()
-    };
-    let settings = settings.clone();
-    let opened = cx.open_window(options, move |window, cx| {
-        let view = cx.new(|cx| McpServiceWindow::new(application, settings, window, cx));
-        cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
-    });
-    match opened {
-        Ok(handle) => cx.set_global(OpenMcpServiceWindow(Some(handle.into()))),
-        Err(error) => log::error!("Could not open the MCP server window: {error}"),
-    }
+pub(super) fn bind_mcp_service_popover_keys(cx: &mut App) {
+    cx.bind_keys([gpui_kit::KeyBinding::new(
+        "escape",
+        CloseMcpServicePopover,
+        Some("McpServicePopover"),
+    )]);
 }
 
 /// Credentials of the service this app session started. The service outlives
-/// the window, so reopening the window must still be able to copy them.
+/// the popover, so reopening it must still be able to copy them.
 #[derive(Default)]
 struct LastMcpCredentials(Option<McpCredentials>);
 
 impl Global for LastMcpCredentials {}
-
-/// Screen position for a window of `window_size` whose bottom-right corner
-/// sits just above the right edge of `anchor`, a rectangle inside the parent
-/// window. The window is kept inside the parent's left and top edges.
-fn anchored_origin(
-    parent: Bounds<Pixels>,
-    anchor: Bounds<Pixels>,
-    window_size: gpui_kit::Size<Pixels>,
-) -> gpui_kit::Point<Pixels> {
-    let margin = px(WINDOW_MARGIN);
-    let x = (parent.origin.x + anchor.right() - window_size.width).max(parent.origin.x + margin);
-    let y = (parent.origin.y + anchor.top() - px(ANCHOR_GAP) - window_size.height)
-        .max(parent.origin.y + margin);
-    point(x, y)
-}
 
 #[derive(Clone)]
 struct McpCredentials {
@@ -125,7 +47,7 @@ struct McpCredentials {
     auth_token: String,
 }
 
-struct McpServiceWindow {
+pub(super) struct McpServicePopover {
     application: Arc<Application>,
     status: Option<McpServiceStatus>,
     credentials: Option<McpCredentials>,
@@ -133,38 +55,31 @@ struct McpServiceWindow {
     request_generation: u64,
     focus_handle: FocusHandle,
     settings: gpui_kit::Entity<ShellSettings>,
-    notifications: Entity<NotificationCenter>,
     /// Keeps the status current while the window is open.
     _status_poll: Task<()>,
     _settings_observation: Subscription,
-    _workspace_release: Subscription,
 }
 
-impl McpServiceWindow {
-    /// Reports an action's outcome in this window's toast stack. The panel
-    /// floats over the main window's bottom-right corner, so its toasts are
-    /// shown inside the panel instead of behind it.
-    fn show_notice(&self, notice: Result<String, String>, cx: &mut Context<Self>) {
+impl EventEmitter<DismissEvent> for McpServicePopover {}
+
+impl McpServicePopover {
+    /// Reports an action's outcome in the workspace notification stack, which
+    /// is drawn above this popover.
+    fn show_notice(&self, notice: Result<String, String>, cx: &mut App) {
         let (tone, message) = match notice {
             Ok(message) => (NotificationTone::Success, message),
             Err(message) => (NotificationTone::Error, message),
         };
-        self.notifications
-            .update(cx, |center, cx| center.push(tone, message, cx));
+        show_notification(tone, message, cx);
     }
 
-    fn new(
+    pub(super) fn new(
         application: Arc<Application>,
         settings: gpui_kit::Entity<ShellSettings>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_observation = cx.observe(&settings, |_, _, cx| cx.notify());
-        // The panel belongs to the main window; close it with it.
-        let workspace_release =
-            cx.observe_release_in(&settings, window, |_, _, window, _| window.remove_window());
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle, cx);
         let status_poll = cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(STATUS_REFRESH_INTERVAL)
@@ -190,17 +105,19 @@ impl McpServiceWindow {
             request_generation: 0,
             focus_handle,
             settings,
-            notifications: cx.new(|_| NotificationCenter::new().bottom_offset(px(12.0))),
             _status_poll: status_poll,
             _settings_observation: settings_observation,
-            _workspace_release: workspace_release,
         };
         item.refresh(cx);
         item
     }
 
-    fn close(&mut self, _: &CloseMcpServiceWindow, window: &mut Window, _: &mut Context<Self>) {
-        window.remove_window();
+    pub(super) fn focus_handle(&self) -> &FocusHandle {
+        &self.focus_handle
+    }
+
+    fn close(&mut self, _: &CloseMcpServicePopover, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
     }
 
     fn refresh_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -371,13 +288,13 @@ impl McpOperation {
     }
 }
 
-impl Focusable for McpServiceWindow {
+impl Focusable for McpServicePopover {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for McpServiceWindow {
+impl Render for McpServicePopover {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let language = self.settings.read(cx).language();
@@ -391,15 +308,18 @@ impl Render for McpServiceWindow {
             .map(|status| phase_label(status.state, language))
             .unwrap_or_else(|| text(language, "正在加载", "Loading"));
 
+        use gpui_kit::component::ThemeStyled as _;
+
         v_flex()
+            .id("mcp-service-popover")
             .track_focus(&self.focus_handle)
-            .key_context("McpServiceWindow")
+            .key_context("McpServicePopover")
             .on_action(cx.listener(Self::close))
-            .relative()
-            .size_full()
+            .occlude()
+            .w(px(POPOVER_WIDTH))
+            .h(px(POPOVER_HEIGHT))
             .overflow_hidden()
-            .bg(colors.background)
-            .text_color(colors.text)
+            .popover_style(cx)
             .child(
                 h_flex()
                     .h(px(44.0))
@@ -522,7 +442,6 @@ impl Render for McpServiceWindow {
                         .color(Color::Muted),
                     ),
             )
-            .child(self.notifications.clone())
     }
 }
 
@@ -564,32 +483,4 @@ fn status_field(label: impl Into<SharedString>, value: impl Into<SharedString>) 
         )
         .child(Label::new(value).size(LabelSize::XSmall))
         .into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
-        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
-    }
-
-    #[test]
-    fn window_sits_above_the_button_right_aligned() {
-        let parent = rect(100.0, 50.0, 1280.0, 800.0);
-        let button = rect(1070.0, 772.0, 24.0, 24.0);
-        let origin = anchored_origin(parent, button, size(px(520.0), px(360.0)));
-        assert_eq!(
-            origin,
-            point(px(100.0 + 1094.0 - 520.0), px(50.0 + 772.0 - 6.0 - 360.0))
-        );
-    }
-
-    #[test]
-    fn window_stays_inside_a_small_parent() {
-        let parent = rect(0.0, 0.0, 400.0, 300.0);
-        let button = rect(360.0, 276.0, 24.0, 24.0);
-        let origin = anchored_origin(parent, button, size(px(520.0), px(360.0)));
-        assert_eq!(origin, point(px(8.0), px(8.0)));
-    }
 }
