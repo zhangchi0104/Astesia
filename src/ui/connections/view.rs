@@ -1,7 +1,7 @@
 use crate::ui::components::{prelude::*, Tooltip};
 use gpui_kit::FontWeight;
 
-use super::{ConnectionProfilesPanel, NoticeTone, OpenProfileMenu, PanelNotice};
+use super::{ConnectionProfilesPanel, OpenProfileMenu};
 use crate::application::connection_workspace::{
     ConnectionWorkspaceError, DatabaseListState, ProfileOperationKind,
 };
@@ -352,35 +352,6 @@ impl ConnectionProfilesPanel {
 
         self.render_virtual_profiles(snapshot, cx)
     }
-
-    fn render_notice(&self, notice: &PanelNotice, cx: &mut Context<Self>) -> AnyElement {
-        let status = cx.theme().status();
-        let (foreground, background, border) = match notice.tone {
-            NoticeTone::Info => (status.info, status.info_background, status.info_border),
-            NoticeTone::Warning => (
-                status.warning,
-                status.warning_background,
-                status.warning_border,
-            ),
-            NoticeTone::Error => (status.error, status.error_background, status.error_border),
-        };
-
-        div()
-            .mx_2()
-            .mb_2()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(border)
-            .bg(background)
-            .child(
-                Label::new(notice.message.clone())
-                    .size(LabelSize::XSmall)
-                    .color(Color::Custom(foreground))
-                    .line_clamp(3),
-            )
-            .into_any_element()
-    }
 }
 
 impl Render for ConnectionProfilesPanel {
@@ -470,9 +441,6 @@ impl Render for ConnectionProfilesPanel {
                     ),
             )
             .child(content)
-            .when_some(self.notice.as_ref(), |element, notice| {
-                element.child(self.render_notice(notice, cx))
-            })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 gpui_kit::deferred(
                     gpui_kit::anchored()

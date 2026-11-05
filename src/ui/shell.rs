@@ -1,9 +1,7 @@
 use crate::ui::components::prelude::*;
-use gpui_kit::Entity;
+use gpui_kit::AnyWindowHandle;
 
 use crate::platform::{DesktopPreferences, NativePreferencesStore, ThemePreference, UiLanguage};
-
-const MAX_VISIBLE_NOTIFICATIONS: usize = 4;
 
 pub(super) struct ShellSettings {
     preferences: DesktopPreferences,
@@ -88,6 +86,7 @@ pub(super) fn apply_theme(preference: ThemePreference, cx: &mut App) {
     };
     Theme::change(mode, None, cx);
     super::theme::restore_selection_surfaces(cx);
+    configure_notifications(cx);
     cx.refresh_windows();
 }
 pub(super) fn refresh_active_theme(preference: ThemePreference, cx: &mut App) {
@@ -95,117 +94,66 @@ pub(super) fn refresh_active_theme(preference: ThemePreference, cx: &mut App) {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum NotificationTone {
+pub(crate) enum NotificationTone {
     Info,
+    Success,
     Warning,
     Error,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Notification {
-    id: u64,
-    tone: NotificationTone,
-    message: String,
+/// Height of the workspace status bar; toasts sit just above it.
+const STATUS_BAR_HEIGHT: f32 = 32.0;
+
+/// Places gpui-kit notifications in the bottom-right corner, just above the
+/// status bar. Called after every theme change so the settings stick.
+fn configure_notifications(cx: &mut App) {
+    let settings = &mut gpui_kit::component::Theme::global_mut(cx).notification;
+    settings.placement = gpui_kit::Anchor::BottomRight;
+    settings.margins.bottom = px(STATUS_BAR_HEIGHT + 12.0);
+    settings.margins.right = px(12.0);
 }
 
-pub(super) struct NotificationCenter {
-    next_id: u64,
-    notifications: Vec<Notification>,
+/// The main window, whose gpui-kit `Root` shows every in-app notification.
+struct NotificationWindow(AnyWindowHandle);
+impl gpui_kit::Global for NotificationWindow {}
+
+/// Makes `window` the target of [`show_notification`].
+pub(super) fn register_notification_window(window: AnyWindowHandle, cx: &mut App) {
+    cx.set_global(NotificationWindow(window));
 }
 
-impl NotificationCenter {
-    pub(super) fn new() -> Self {
-        Self {
-            next_id: 0,
-            notifications: Vec::new(),
+/// Marks notifications pushed by [`show_notification`], so repeating a
+/// message replaces its toast instead of stacking a copy.
+struct AppNotification;
+
+/// Shows a gpui-kit notification toast in the main window's bottom-right
+/// corner. It hides itself after a few seconds, pausing while hovered. Does
+/// nothing before the workspace window exists (for example in view tests).
+pub(crate) fn show_notification(tone: NotificationTone, message: impl Into<String>, cx: &mut App) {
+    use gpui_kit::component::{notification::Notification, WindowExt as _};
+
+    let Some(window) = cx.try_global::<NotificationWindow>().map(|global| global.0) else {
+        return;
+    };
+    let message: SharedString = message.into().into();
+    // Callers usually run inside the main window's own update, which cannot
+    // be re-entered, so the push waits until the current effect cycle ends.
+    cx.defer(move |cx| {
+        let note = match tone {
+            NotificationTone::Info => Notification::info(message.clone()),
+            NotificationTone::Success => Notification::success(message.clone()),
+            NotificationTone::Warning => Notification::warning(message.clone()),
+            NotificationTone::Error => Notification::error(message.clone()),
         }
-    }
-
-    pub(super) fn push(
-        &mut self,
-        tone: NotificationTone,
-        message: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.next_id = self.next_id.wrapping_add(1);
-        self.notifications.push(Notification {
-            id: self.next_id,
-            tone,
-            message: message.into(),
-        });
-        if self.notifications.len() > MAX_VISIBLE_NOTIFICATIONS {
-            self.notifications.remove(0);
+        .id1::<AppNotification>(message);
+        if let Err(error) = window.update(cx, |_, window, cx| window.push_notification(note, cx)) {
+            log::warn!("Could not show a notification: {error}");
         }
-        cx.notify();
-    }
-
-    fn dismiss(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.notifications
-            .retain(|notification| notification.id != id);
-        cx.notify();
-    }
-}
-
-impl Render for NotificationCenter {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let status = cx.theme().status();
-        v_flex()
-            .absolute()
-            .top_3()
-            .right_3()
-            .w(px(360.0))
-            .gap_2()
-            .children(self.notifications.iter().map(|notification| {
-                let id = notification.id;
-                let (foreground, background, border) = match notification.tone {
-                    NotificationTone::Info => {
-                        (status.info, status.info_background, status.info_border)
-                    }
-                    NotificationTone::Warning => (
-                        status.warning,
-                        status.warning_background,
-                        status.warning_border,
-                    ),
-                    NotificationTone::Error => {
-                        (status.error, status.error_background, status.error_border)
-                    }
-                };
-                h_flex()
-                    .id(format!("notification-{id}"))
-                    .items_start()
-                    .gap_2()
-                    .p_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(border)
-                    .bg(background)
-                    .shadow_md()
-                    .child(
-                        Label::new(notification.message.clone())
-                            .size(LabelSize::XSmall)
-                            .color(Color::Custom(foreground))
-                            .line_clamp(4)
-                            .flex_1(),
-                    )
-                    .child(
-                        IconButton::new(format!("dismiss-notification-{id}"), IconName::Close)
-                            .icon_size(IconSize::XSmall)
-                            .on_click(cx.listener(move |center, _, _, cx| {
-                                center.dismiss(id, cx);
-                            })),
-                    )
-            }))
-    }
-}
-
-pub(super) fn notify_preference_error(
-    center: &Entity<NotificationCenter>,
-    error: String,
-    cx: &mut App,
-) {
-    center.update(cx, |center, cx| {
-        center.push(NotificationTone::Error, error, cx);
     });
+}
+
+pub(super) fn notify_preference_error(error: String, cx: &mut App) {
+    show_notification(NotificationTone::Error, error, cx);
 }
 
 pub(super) struct UiLocale(pub UiLanguage);

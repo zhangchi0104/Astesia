@@ -256,11 +256,13 @@ impl ConnectionProfilesPanel {
         }
     }
 
-    pub(super) fn set_notice(&mut self, tone: NoticeTone, message: impl Into<String>) {
-        self.notice = Some(PanelNotice {
-            tone,
-            message: message.into(),
-        });
+    pub(super) fn set_notice(
+        &mut self,
+        tone: super::NoticeTone,
+        message: impl Into<String>,
+        cx: &mut App,
+    ) {
+        crate::ui::shell::show_notification(tone, message, cx);
     }
 }
 pub(super) fn derive_status(

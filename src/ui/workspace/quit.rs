@@ -89,12 +89,11 @@ mod tests {
         );
         let application = Arc::new(Application::with_repository(repository));
         let settings = cx.new(|_| ShellSettings::new(DesktopPreferences::default(), None));
-        let notifications = cx.new(|_| NotificationCenter::new());
         let window = cx.add_window(|window, cx| {
             let profiles = cx.new(|cx| {
                 ConnectionProfilesPanel::new(application.clone(), settings.clone(), window, cx)
             });
-            AstesiaWorkspace::new(application, profiles, settings, notifications, window, cx)
+            AstesiaWorkspace::new(application, profiles, settings, window, cx)
         });
         window
             .update(cx, |workspace, window, cx| {

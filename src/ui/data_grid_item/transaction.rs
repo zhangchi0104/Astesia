@@ -135,12 +135,11 @@ impl DataGridItem {
                         item.transaction = transaction;
                         item.manual_transaction = manual;
                         item.transaction_isolation = isolation;
-                        item.operation_notice = None;
                         item.load(cx);
                     }
                     Err(error) => {
                         item.manual_transaction = false;
-                        item.operation_notice = Some(GridNotice::Error(error));
+                        item.show_notice(GridNotice::Error(error), cx);
                         cx.notify();
                     }
                 }
@@ -248,7 +247,7 @@ impl DataGridItem {
                         item.change_transaction_configuration(true, item.transaction_isolation, cx);
                     }
                     Err(error) => {
-                        item.operation_notice = Some(GridNotice::Error(error));
+                        item.show_notice(GridNotice::Error(error), cx);
                         cx.notify();
                     }
                 }

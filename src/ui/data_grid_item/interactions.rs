@@ -58,7 +58,6 @@ impl DataGridItem {
         if self.apply_query_editors(cx).is_none() {
             return;
         }
-        self.operation_notice = None;
         if self.showing_chart {
             self.load_chart(cx);
         } else {
@@ -152,7 +151,6 @@ impl DataGridItem {
         }
         let page = self.state.query().page;
         if page > 1 && self.state.set_page(page - 1).unwrap_or(false) {
-            self.operation_notice = None;
             self.load(cx);
         }
     }
@@ -163,7 +161,6 @@ impl DataGridItem {
         }
         let page = self.state.query().page;
         if self.state.set_page(page.saturating_add(1)).unwrap_or(false) {
-            self.operation_notice = None;
             self.load(cx);
         }
     }
@@ -191,7 +188,6 @@ impl DataGridItem {
         if self.state.set_query_options(filter, sort).unwrap_or(false) {
             self.sort_editor
                 .update(cx, |editor, cx| editor.set_text(sort_text, window, cx));
-            self.operation_notice = None;
             self.load(cx);
         }
     }
@@ -210,7 +206,6 @@ impl DataGridItem {
             return;
         }
         if self.apply_query_editors(cx) == Some(true) {
-            self.operation_notice = None;
             self.load(cx);
         }
     }
@@ -222,14 +217,17 @@ impl DataGridItem {
         let sort = match GridSort::parse_list(&self.sort_editor.read(cx).text(cx)) {
             Ok(sort) => sort,
             Err(error) => {
-                self.operation_notice = Some(GridNotice::Error(format!(
-                    "{}: {error}",
-                    text(
-                        self.settings.read(cx).language(),
-                        "排序无效",
-                        "Invalid ordering"
-                    )
-                )));
+                self.show_notice(
+                    GridNotice::Error(format!(
+                        "{}: {error}",
+                        text(
+                            self.settings.read(cx).language(),
+                            "排序无效",
+                            "Invalid ordering"
+                        )
+                    )),
+                    cx,
+                );
                 cx.notify();
                 return None;
             }
@@ -243,8 +241,7 @@ impl DataGridItem {
             Ok(changed) => Some(changed),
             Err(error) => {
                 let language = self.settings.read(cx).language();
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_error_message(error, language)));
+                self.show_notice(GridNotice::Error(grid_error_message(error, language)), cx);
                 cx.notify();
                 None
             }
@@ -286,14 +283,17 @@ impl DataGridItem {
     pub(super) fn paste_selection(&mut self, cx: &mut Context<Self>) {
         let language = self.settings.read(cx).language();
         let Some(text_value) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            self.operation_notice = Some(GridNotice::Warning(
-                text(
-                    language,
-                    "剪贴板中没有可粘贴的文本。",
-                    "The clipboard does not contain text to paste.",
-                )
-                .to_string(),
-            ));
+            self.show_notice(
+                GridNotice::Warning(
+                    text(
+                        language,
+                        "剪贴板中没有可粘贴的文本。",
+                        "The clipboard does not contain text to paste.",
+                    )
+                    .to_string(),
+                ),
+                cx,
+            );
             cx.notify();
             return;
         };
@@ -308,29 +308,33 @@ impl DataGridItem {
         let assignments = match grid_paste_assignments(page, anchor, &text_value) {
             Ok(assignments) => assignments,
             Err(error) => {
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_paste_error_message(error, language)));
+                self.show_notice(
+                    GridNotice::Error(grid_paste_error_message(error, language)),
+                    cx,
+                );
                 cx.notify();
                 return;
             }
         };
         match self.state.stage_cell_values(assignments) {
             Ok(changed) if changed > 0 => {
-                self.operation_notice = Some(GridNotice::Success(format!(
-                    "{} {}",
-                    changed,
-                    text(
-                        language,
-                        "个单元格已暂存。保存更改后才会写入数据库。",
-                        "cell(s) staged. Save Changes to apply."
-                    )
-                )));
+                self.show_notice(
+                    GridNotice::Success(format!(
+                        "{} {}",
+                        changed,
+                        text(
+                            language,
+                            "个单元格已暂存。保存更改后才会写入数据库。",
+                            "cell(s) staged. Save Changes to apply."
+                        )
+                    )),
+                    cx,
+                );
                 cx.notify();
             }
             Ok(_) => {}
             Err(error) => {
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_error_message(error, language)));
+                self.show_notice(GridNotice::Error(grid_error_message(error, language)), cx);
                 cx.notify();
             }
         }
@@ -617,8 +621,7 @@ impl DataGridItem {
             Ok(draft_id) => draft_id,
             Err(error) => {
                 let language = self.settings.read(cx).language();
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_error_message(error, language)));
+                self.show_notice(GridNotice::Error(grid_error_message(error, language)), cx);
                 cx.notify();
                 return;
             }
@@ -633,7 +636,6 @@ impl DataGridItem {
                     .or_else(|| (!page.columns.is_empty()).then_some(0))
             })
             .unwrap_or(0);
-        self.operation_notice = None;
         self.begin_draft_cell_edit(draft_id, first_column, window, cx);
     }
 
@@ -675,14 +677,12 @@ impl DataGridItem {
         }
         match self.state.remove_draft(draft_id) {
             Ok(_) => {
-                self.operation_notice = None;
                 window.focus(&self.focus_handle, cx);
                 cx.notify();
             }
             Err(error) => {
                 let language = self.settings.read(cx).language();
-                self.operation_notice =
-                    Some(GridNotice::Error(grid_error_message(error, language)));
+                self.show_notice(GridNotice::Error(grid_error_message(error, language)), cx);
                 cx.notify();
             }
         }
@@ -742,31 +742,36 @@ impl DataGridItem {
                 match item.state.stage_delete_selection() {
                     Ok(true) => {
                         item.active_cell = None;
-                        item.operation_notice = Some(GridNotice::Warning(if count == 1 {
-                            text(
+                        item.show_notice(
+                            GridNotice::Warning(if count == 1 {
+                                text(
                                 language,
                                 "所选行已标记为待删除。保存更改后才会写入数据库。",
                                 "The selected row is marked for deletion. Save Changes to apply.",
                             )
                             .to_string()
-                        } else {
-                            format!(
-                                "{} {}",
-                                count,
-                                text(
-                                    language,
-                                    "行已标记为待删除。保存更改后才会写入数据库。",
-                                    "rows are marked for deletion. Save Changes to apply."
+                            } else {
+                                format!(
+                                    "{} {}",
+                                    count,
+                                    text(
+                                        language,
+                                        "行已标记为待删除。保存更改后才会写入数据库。",
+                                        "rows are marked for deletion. Save Changes to apply."
+                                    )
                                 )
-                            )
-                        }));
+                            }),
+                            cx,
+                        );
                         window.focus(&item.focus_handle, cx);
                         cx.notify();
                     }
                     Ok(false) => {}
                     Err(error) => {
-                        item.operation_notice =
-                            Some(GridNotice::Error(grid_error_message(error, language)));
+                        item.show_notice(
+                            GridNotice::Error(grid_error_message(error, language)),
+                            cx,
+                        );
                         cx.notify();
                     }
                 }

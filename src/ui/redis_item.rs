@@ -12,7 +12,10 @@ use crate::application::{
     RedisValue,
 };
 
-use super::{localization::text, shell::ShellSettings};
+use super::{
+    localization::text,
+    shell::{show_notification, NotificationTone, ShellSettings},
+};
 
 #[derive(Debug)]
 enum RedisItemState {
@@ -31,7 +34,6 @@ pub(super) struct RedisItem {
     mutation_busy: bool,
     page_loading: bool,
     current_cursor: Option<RedisPageCursor>,
-    notice: Option<Result<String, String>>,
     primary_input: Entity<InputField>,
     secondary_input: Entity<InputField>,
     ttl_input: Entity<InputField>,
@@ -51,6 +53,15 @@ pub(super) struct RedisKeyDeleted {
 impl EventEmitter<RedisKeyDeleted> for RedisItem {}
 
 impl RedisItem {
+    /// Reports an action's outcome in the workspace notification stack.
+    fn show_notice(&self, notice: Result<String, String>, cx: &mut App) {
+        let (tone, message) = match notice {
+            Ok(message) => (NotificationTone::Success, message),
+            Err(message) => (NotificationTone::Error, message),
+        };
+        show_notification(tone, message, cx);
+    }
+
     pub(super) fn new(
         application: Arc<Application>,
         target: QueryTarget,
@@ -91,7 +102,6 @@ impl RedisItem {
             mutation_busy: false,
             page_loading: false,
             current_cursor: None,
-            notice: None,
             primary_input,
             secondary_input,
             ttl_input,
@@ -186,7 +196,7 @@ impl RedisItem {
                         item.state = RedisItemState::Ready(snapshot);
                     }
                     Err(error) if matches!(item.state, RedisItemState::Ready(_)) => {
-                        item.notice = Some(Err(error));
+                        item.show_notice(Err(error), cx);
                     }
                     Err(error) => item.state = RedisItemState::Failed(error),
                 }
@@ -199,7 +209,6 @@ impl RedisItem {
 
     fn refresh(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         if !self.is_busy() {
-            self.notice = None;
             self.load(cx);
         }
     }
@@ -212,7 +221,6 @@ impl RedisItem {
             return;
         };
         if let Some(cursor) = snapshot.next_page {
-            self.notice = None;
             self.load_page(Some(cursor), cx);
         }
     }
@@ -229,12 +237,15 @@ impl RedisItem {
         } else {
             match ttl.trim().parse::<u64>() {
                 Ok(0) | Err(_) => {
-                    self.notice = Some(Err(text(
-                        self.settings.read(cx).language(),
-                        "TTL 必须是正整数",
-                        "TTL must be a positive integer",
-                    )
-                    .to_string()));
+                    self.show_notice(
+                        Err(text(
+                            self.settings.read(cx).language(),
+                            "TTL 必须是正整数",
+                            "TTL must be a positive integer",
+                        )
+                        .to_string()),
+                        cx,
+                    );
                     cx.notify();
                     return;
                 }
@@ -294,12 +305,15 @@ impl RedisItem {
         {
             Ok(score) if score.is_finite() => score,
             _ => {
-                self.notice = Some(Err(text(
-                    self.settings.read(cx).language(),
-                    "分数必须是有限数字",
-                    "Score must be a finite number",
-                )
-                .to_string()));
+                self.show_notice(
+                    Err(text(
+                        self.settings.read(cx).language(),
+                        "分数必须是有限数字",
+                        "Score must be a finite number",
+                    )
+                    .to_string()),
+                    cx,
+                );
                 cx.notify();
                 return;
             }
@@ -348,7 +362,6 @@ impl RedisItem {
             return;
         }
         self.mutation_busy = true;
-        self.notice = None;
         cx.notify();
         let application = self.application.clone();
         let target = self.target.clone();
@@ -369,12 +382,15 @@ impl RedisItem {
                 item.mutation_busy = false;
                 let succeeded = result.is_ok();
                 let language = item.settings.read(cx).language();
-                item.notice = Some(result.map(|affected| {
-                    format!(
-                        "{} {affected}",
-                        text(language, "已更新项数：", "Items updated:")
-                    )
-                }));
+                item.show_notice(
+                    result.map(|affected| {
+                        format!(
+                            "{} {affected}",
+                            text(language, "已更新项数：", "Items updated:")
+                        )
+                    }),
+                    cx,
+                );
                 item.load(cx);
                 if succeeded && refresh_catalog {
                     cx.emit(RedisKeyDeleted {
@@ -737,20 +753,6 @@ impl Render for RedisItem {
                             .on_click(cx.listener(Self::confirm_delete)),
                     ),
             )
-            .when_some(self.notice.clone(), |element, notice| {
-                let (message, color) = match notice {
-                    Ok(message) => (message, Color::Success),
-                    Err(message) => (message, Color::Error),
-                };
-                element.child(
-                    h_flex()
-                        .px_3()
-                        .py_1()
-                        .border_b_1()
-                        .border_color(colors.border)
-                        .child(Label::new(message).size(LabelSize::XSmall).color(color)),
-                )
-            })
             .when_some(mutation_controls, |element, controls| {
                 element.child(
                     div()

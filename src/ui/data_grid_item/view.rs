@@ -68,8 +68,7 @@ impl Render for DataGridItem {
                     self.chart_error
                         .clone()
                         .map(|error| (Color::Error, IconName::TriangleAlert, error))
-                })
-                .or_else(|| self.operation_notice.clone().map(GridNotice::presentation)),
+                }),
         };
         let editability = self.state.editability();
         let editable = matches!(editability, GridEditability::Editable { .. });

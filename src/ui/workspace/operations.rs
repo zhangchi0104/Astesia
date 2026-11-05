@@ -11,10 +11,10 @@ use crate::ui::{
     document_item::DocumentItem,
     er_diagram_item::ErDiagramItem,
     localization::text,
-    mcp_service_window::open_mcp_service_window,
+    mcp_service_popover::McpServicePopover,
     performance_item::PerformanceItem,
     redis_item::{RedisItem, RedisKeyDeleted},
-    shell::NotificationTone,
+    shell::{show_notification, NotificationTone},
     task_center_item::TaskCenterItem,
 };
 
@@ -157,9 +157,33 @@ impl AstesiaWorkspace {
         });
     }
 
+    /// Opens the MCP server popover above the status bar button, or closes
+    /// it when it is already open.
     pub(super) fn open_mcp_service(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let anchor = self.mcp_button_bounds.get();
-        open_mcp_service_window(self.application.clone(), &self.settings, anchor, window, cx);
+        if self.mcp_service.is_some() {
+            self.close_mcp_service(window, cx);
+            return;
+        }
+        let application = self.application.clone();
+        let settings = self.settings.clone();
+        let popover = cx.new(|cx| McpServicePopover::new(application, settings, cx));
+        let subscription = cx.subscribe_in(
+            &popover,
+            window,
+            |workspace, _, _: &gpui_kit::DismissEvent, window, cx| {
+                workspace.close_mcp_service(window, cx);
+            },
+        );
+        window.focus(&popover.read(cx).focus_handle().clone(), cx);
+        self.mcp_service = Some((popover, subscription));
+        cx.notify();
+    }
+
+    pub(super) fn close_mcp_service(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mcp_service.take().is_some() {
+            window.focus(&self.focus_handle.clone(), cx);
+            cx.notify();
+        }
     }
 
     pub(super) fn choose_backup_content(
@@ -415,16 +439,14 @@ impl AstesiaWorkspace {
         match result {
             Ok(task_id) => {
                 let language = self.settings.read(cx).language();
-                self.notifications.update(cx, |center, cx| {
-                    center.push(
-                        NotificationTone::Info,
-                        format!(
-                            "{}: {task_id}",
-                            text(language, "后台任务已启动", "Background task started")
-                        ),
-                        cx,
-                    );
-                });
+                show_notification(
+                    NotificationTone::Info,
+                    format!(
+                        "{}: {task_id}",
+                        text(language, "后台任务已启动", "Background task started")
+                    ),
+                    cx,
+                );
                 self.open_task_center(window, cx);
             }
             Err(error) => self.notify_transfer_error(error, cx),
@@ -432,8 +454,6 @@ impl AstesiaWorkspace {
     }
 
     fn notify_transfer_error(&mut self, error: String, cx: &mut Context<Self>) {
-        self.notifications.update(cx, |center, cx| {
-            center.push(NotificationTone::Error, error, cx);
-        });
+        show_notification(NotificationTone::Error, error, cx);
     }
 }
