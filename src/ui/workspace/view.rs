@@ -223,7 +223,6 @@ impl Render for AstesiaWorkspace {
             )
             .children(self.render_mcp_service(cx))
             .child(self.modal_layer.clone())
-            .child(self.notifications.clone())
     }
 }
 

@@ -14,7 +14,7 @@ use crate::ui::{
     mcp_service_popover::McpServicePopover,
     performance_item::PerformanceItem,
     redis_item::{RedisItem, RedisKeyDeleted},
-    shell::NotificationTone,
+    shell::{show_notification, NotificationTone},
     task_center_item::TaskCenterItem,
 };
 
@@ -439,16 +439,14 @@ impl AstesiaWorkspace {
         match result {
             Ok(task_id) => {
                 let language = self.settings.read(cx).language();
-                self.notifications.update(cx, |center, cx| {
-                    center.push(
-                        NotificationTone::Info,
-                        format!(
-                            "{}: {task_id}",
-                            text(language, "后台任务已启动", "Background task started")
-                        ),
-                        cx,
-                    );
-                });
+                show_notification(
+                    NotificationTone::Info,
+                    format!(
+                        "{}: {task_id}",
+                        text(language, "后台任务已启动", "Background task started")
+                    ),
+                    cx,
+                );
                 self.open_task_center(window, cx);
             }
             Err(error) => self.notify_transfer_error(error, cx),
@@ -456,8 +454,6 @@ impl AstesiaWorkspace {
     }
 
     fn notify_transfer_error(&mut self, error: String, cx: &mut Context<Self>) {
-        self.notifications.update(cx, |center, cx| {
-            center.push(NotificationTone::Error, error, cx);
-        });
+        show_notification(NotificationTone::Error, error, cx);
     }
 }

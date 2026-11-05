@@ -26,8 +26,8 @@ use super::{
     object_mutation_form::{ObjectMutationForm, ObjectMutationFormMode, ObjectMutationSaved},
     query_item::{QueryContextChanged, QueryDocumentStateChanged, QueryItem},
     shell::{
-        notify_preference_error, refresh_active_theme, NotificationCenter, NotificationTone,
-        ShellSettings,
+        notify_preference_error, refresh_active_theme, register_notification_window,
+        show_notification, NotificationTone, ShellSettings,
     },
     sql_language,
     table_structure_item::TableStructureItem,
@@ -169,12 +169,9 @@ impl AstesiaRoot {
                                 root.preferences_store.clone(),
                             )
                         });
-                        let notifications = cx.new(|_| NotificationCenter::new());
-                        NotificationCenter::register(&notifications, cx);
+                        register_notification_window(window.window_handle(), cx);
                         if let Some(warning) = root.preferences_warning.take() {
-                            notifications.update(cx, |center, cx| {
-                                center.push(NotificationTone::Warning, warning, cx);
-                            });
+                            show_notification(NotificationTone::Warning, warning, cx);
                         }
                         let connection_profiles = cx.new(|cx| {
                             ConnectionProfilesPanel::new(
@@ -189,7 +186,6 @@ impl AstesiaRoot {
                                 application,
                                 connection_profiles,
                                 settings,
-                                notifications,
                                 window,
                                 cx,
                             )
@@ -208,7 +204,7 @@ impl AstesiaRoot {
 }
 
 impl Render for AstesiaRoot {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let language = self.preferences.language;
         let content = match &self.phase {
@@ -255,11 +251,17 @@ impl Render for AstesiaRoot {
                 .into_any_element(),
         };
 
+        // gpui-kit's notification layer, deferred so toasts float above the
+        // MCP popover, menus and other overlays.
+        let notifications = gpui_kit::component::Root::render_notification_layer(window, cx)
+            .map(|layer| deferred(layer).with_priority(4));
         v_flex()
+            .relative()
             .size_full()
             .overflow_hidden()
             .child(self.title_bar.clone())
             .child(div().flex_1().min_h_0().child(content))
+            .children(notifications)
     }
 }
 
@@ -272,7 +274,6 @@ pub(super) struct AstesiaWorkspace {
     tab_scroll_handle: gpui_kit::ScrollHandle,
     workspace_tabs: Vec<WorkspaceTab>,
     settings: Entity<ShellSettings>,
-    notifications: Entity<NotificationCenter>,
     modal_layer: Entity<ModalLayer>,
     _profiles_subscription: Subscription,
     _profiles_observation: Subscription,
@@ -304,7 +305,6 @@ impl AstesiaWorkspace {
         application: Arc<Application>,
         connection_profiles: Entity<ConnectionProfilesPanel>,
         settings: Entity<ShellSettings>,
-        notifications: Entity<NotificationCenter>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -325,7 +325,7 @@ impl AstesiaWorkspace {
             match application_events.recv().await {
                 Ok(crate::platform::UiEvent::TaskCompleted { task }) => {
                     workspace
-                        .update(cx, |workspace, cx| {
+                        .update(cx, |_, cx| {
                             let tone = match &task.status {
                                 crate::tasks::TaskStatus::Completed => NotificationTone::Success,
                                 crate::tasks::TaskStatus::Partial
@@ -335,9 +335,7 @@ impl AstesiaWorkspace {
                                 | crate::tasks::TaskStatus::Running
                                 | crate::tasks::TaskStatus::Cancelling => return,
                             };
-                            workspace.notifications.update(cx, |center, cx| {
-                                center.push(tone, format!("{}: {}", task.name, task.message), cx);
-                            });
+                            show_notification(tone, format!("{}: {}", task.name, task.message), cx);
                             cx.notify();
                         })
                         .ok();
@@ -359,7 +357,6 @@ impl AstesiaWorkspace {
             tab_scroll_handle: gpui_kit::ScrollHandle::new(),
             workspace_tabs,
             settings,
-            notifications,
             modal_layer,
             _profiles_subscription: profiles_subscription,
             _profiles_observation: profiles_observation,
@@ -515,17 +512,15 @@ impl AstesiaWorkspace {
                     panel.profile_saved(event.profile.id.clone(), cx);
                 });
                 let language = workspace.settings.read(cx).language();
-                workspace.notifications.update(cx, |center, cx| {
-                    center.push(
-                        NotificationTone::Success,
-                        format!(
-                            "{}: {}",
-                            text(language, "连接配置已保存", "Connection profile saved"),
-                            event.profile.name
-                        ),
-                        cx,
-                    );
-                });
+                show_notification(
+                    NotificationTone::Success,
+                    format!(
+                        "{}: {}",
+                        text(language, "连接配置已保存", "Connection profile saved"),
+                        event.profile.name
+                    ),
+                    cx,
+                );
             },
         ));
     }
@@ -561,21 +556,19 @@ impl AstesiaWorkspace {
                         cx,
                     );
                 });
-                workspace.notifications.update(cx, |center, cx| {
-                    center.push(
-                        NotificationTone::Success,
-                        format!(
-                            "{}: {}",
-                            text(
-                                workspace.settings.read(cx).language(),
-                                "数据库对象已更新",
-                                "Database object updated"
-                            ),
-                            event.identity
+                show_notification(
+                    NotificationTone::Success,
+                    format!(
+                        "{}: {}",
+                        text(
+                            workspace.settings.read(cx).language(),
+                            "数据库对象已更新",
+                            "Database object updated"
                         ),
-                        cx,
-                    );
-                });
+                        event.identity
+                    ),
+                    cx,
+                );
             },
         ));
     }
@@ -867,7 +860,7 @@ impl AstesiaWorkspace {
             .settings
             .update(cx, |settings, cx| settings.toggle_sidebar(cx));
         if let Err(error) = result {
-            notify_preference_error(&self.notifications, error, cx);
+            notify_preference_error(error, cx);
         }
     }
 
@@ -876,7 +869,7 @@ impl AstesiaWorkspace {
             .settings
             .update(cx, |settings, cx| settings.set_theme(theme, cx));
         if let Err(error) = result {
-            notify_preference_error(&self.notifications, error, cx);
+            notify_preference_error(error, cx);
         }
     }
 
@@ -885,7 +878,7 @@ impl AstesiaWorkspace {
             .settings
             .update(cx, |settings, cx| settings.set_language(language, cx));
         if let Err(error) = result {
-            notify_preference_error(&self.notifications, error, cx);
+            notify_preference_error(error, cx);
         }
     }
 
